@@ -1,26 +1,23 @@
-use std::sync::Arc;
 mod catalog;
 mod utils;
 
 use catalog::{
-    backend::postgres::{
-        CatalogSQLService, SQlCatalogCmd, SqlCatalogObject, SqlCatalogQueryOptions,
-    },
+    backend::{CatalogSQLService, SQlCatalogCmd, SqlCatalogObject, SqlCatalogQueryOptions},
     service::{CatalogError, CatalogService, Commander},
 };
 use serde::Serialize;
 use serde_json::json;
-use sqlx::{migrate::Migrator, PgPool};
+use sqlx::{migrate::Migrator, SqlitePool as Pool};
 use tide::{Body, Request, Response};
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 #[derive(Clone)]
 struct MyState {
-    catalog_service: Arc<CatalogSQLService>,
+    catalog_service: CatalogSQLService,
 }
 
 impl MyState {
-    fn new(catalog_service: Arc<CatalogSQLService>) -> Self {
+    fn new(catalog_service: CatalogSQLService) -> Self {
         Self { catalog_service }
     }
 }
@@ -71,29 +68,18 @@ fn wrap_result<T: Serialize>(
                 }));
                 Ok(res)
             }
-            _ => {
-                let mut res = Response::new(500);
-                res.set_body(json!({
-                  "success": false,
-                  "error": "E_UNNOWN_ERROR",
-                  "error_message": ""
-                }));
-                Ok(res)
-            }
         },
     }
 }
 
 async fn read(request: Request<MyState>) -> tide::Result {
     let account_id = request.param("account")?;
-    let uuid = request.param("id")?;
-    println!("read({}, {})", account_id, uuid);
+    let id = request.param("id")?;
+    println!("read({}, {})", account_id, id);
     let state = request.state().clone();
     let service = state.catalog_service.clone();
     println!("retriving the service id");
-    let result = service
-        .read(account_id.to_string(), uuid::Uuid::parse_str(uuid)?)
-        .await;
+    let result = service.read(account_id.to_string(), id.parse()?).await;
     Ok(wrap_result(&result).unwrap())
 }
 
@@ -121,15 +107,11 @@ async fn update(mut request: Request<MyState>) -> tide::Result {
     let catalog: SqlCatalogObject = request.body_json().await?;
     let account_id = request.param("account")?;
     println!("Create({}) - {:?}", account_id, catalog);
-    let uuid = request.param("id")?;
+    let id = request.param("id")?;
     let state = request.state().clone();
     let service = state.catalog_service.clone();
     let result = service
-        .update(
-            account_id.to_string(),
-            uuid::Uuid::parse_str(uuid)?,
-            &catalog,
-        )
+        .update(account_id.to_string(), id.parse()?, &catalog)
         .await;
     Ok(wrap_result(&result).unwrap())
 }
@@ -139,7 +121,7 @@ async fn cmd(mut request: Request<MyState>) -> tide::Result {
     let account_id = request.param("account")?;
     let state = request.state().clone();
     let service = state.catalog_service.clone();
-    service.cmd(account_id.to_string(), cmd).await;
+    service.cmd(account_id.to_string(), cmd).await?;
     let mut res = Response::new(200);
     res.set_body(json!({
       "success": true
@@ -147,19 +129,24 @@ async fn cmd(mut request: Request<MyState>) -> tide::Result {
     Ok(res)
 }
 
+const DEFAULT_DB_FILE: &str = "sqlite:merchant.db";
+const DEFAULT_PORT: &str = "5555";
+
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let database_url = dotenv::var("DATABASE_URL").unwrap();
-    let conn = Box::new(PgPool::connect(&database_url).await?);
-    MIGRATOR.run(conn.as_ref()).await?;
-    let catalog_service = Arc::new(CatalogSQLService::new(conn.clone()));
-    let mut app = tide::with_state(MyState::new(catalog_service.clone()));
+    let db_file = std::env::args()
+        .skip(1)
+        .next()
+        .map(|f| format!("sqlite:{}", f))
+        .unwrap_or(DEFAULT_DB_FILE.into());
+    let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.into());
 
-    app.at("/").get(|_| async move {
-        Ok(json!({
-          "version": "1"
-        }))
-    });
+    let conn = Pool::connect(&db_file).await?;
+    MIGRATOR.run(&conn).await?;
+    let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
+
+    app.at("/")
+        .get(|_| async move { Ok(json!({ "version": "1" })) });
 
     app.at("/catalog/:account").get(list).post(create);
 
@@ -167,7 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     app.at("/catalog/:account/cmd").post(cmd);
 
-    let port = dotenv::var("PORT").unwrap();
-    app.listen(format!("0.0.0.0:{}", port)).await?;
+    let addr = format!("0.0.0.0:{}", port);
+    println!("Listening on {}", &addr);
+    app.listen(addr).await?;
     Ok(())
 }

@@ -1,31 +1,29 @@
 use std::fmt::Display;
 
-use super::super::utils::query::Query;
 use super::models::{CatalogObject, CatalogObjectDocument};
-sea_query::sea_query_driver_postgres!();
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct IncreaseItemVariationUnitsPayload<TUuid> {
-    pub uuid: TUuid,
+pub struct IncreaseItemVariationUnitsPayload<Id> {
+    pub id: Id,
     pub units: i32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
-pub enum CatalogCmd<TUuid> {
-    IncreaseItemVariationUnits(IncreaseItemVariationUnitsPayload<TUuid>),
+pub enum CatalogCmd<Id> {
+    IncreaseItemVariationUnits(IncreaseItemVariationUnitsPayload<Id>),
 }
 
 #[async_trait]
-pub trait Commander<TAccount> {
+pub trait Commander {
+    type Account;
     type Cmd;
-    async fn cmd(&self, account: TAccount, cmd: Self::Cmd) -> Result<(), CatalogError>;
+    async fn cmd(&self, account: Self::Account, cmd: Self::Cmd) -> Result<(), CatalogError>;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ListCatalogQueryOptions {
     pub name: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -40,29 +38,36 @@ pub enum CatalogColumnOrder {
 }
 
 #[async_trait]
-pub trait CatalogService<TUuid, TAccount>: Commander<TAccount> {
+pub trait CatalogService: Commander {
+    type Id;
+    type Query: Send;
+
     async fn create(
         &self,
-        account: TAccount,
-        catalog: &CatalogObject<TUuid>,
-    ) -> Result<CatalogObjectDocument<TUuid, TAccount>, CatalogError>;
-    async fn exists(&self, account: TAccount, uuid: TUuid) -> Result<bool, CatalogError>;
+        account: Self::Account,
+        catalog: &CatalogObject<Self::Id>,
+    ) -> Result<CatalogObjectDocument<Self::Id, Self::Account>, CatalogError>;
+
+    async fn exists(&self, account: Self::Account, id: Self::Id) -> Result<bool, CatalogError>;
+
     async fn read(
         &self,
-        account: TAccount,
-        uuid: TUuid,
-    ) -> Result<CatalogObjectDocument<TUuid, TAccount>, CatalogError>;
+        account: Self::Account,
+        id: Self::Id,
+    ) -> Result<CatalogObjectDocument<Self::Id, Self::Account>, CatalogError>;
+
     async fn update(
         &self,
-        account: TAccount,
-        uuid: TUuid,
-        catalog_document: &CatalogObject<TUuid>,
-    ) -> Result<CatalogObjectDocument<TUuid, TAccount>, CatalogError>;
+        account: Self::Account,
+        id: Self::Id,
+        catalog_document: &CatalogObject<Self::Id>,
+    ) -> Result<CatalogObjectDocument<Self::Id, Self::Account>, CatalogError>;
+
     async fn list(
         &self,
-        account: TAccount,
-        query: &Query<ListCatalogQueryOptions, CatalogColumnOrder>,
-    ) -> Result<Vec<CatalogObjectDocument<TUuid, TAccount>>, CatalogError>;
+        account: Self::Account,
+        query: &Self::Query,
+    ) -> Result<Vec<CatalogObjectDocument<Self::Id, Self::Account>>, CatalogError>;
 }
 
 impl std::error::Error for CatalogError {}

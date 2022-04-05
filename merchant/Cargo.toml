@@ -1,21 +1,18 @@
 [package]
 name = "merchant"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-tide = "0.16.0"
+async-std = { version = "1.8.0", features = ["attributes"] }
+async-trait = "0.1.52"
+rand = "0.8"
+sea-query = { version = "0.23.0", features = ["sqlx-sqlite"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-async-std = { version = "1.8.0", features = ["attributes"] }
-sqlx = { version = "0.5", features = [ "runtime-async-std-native-tls", "postgres", "json", "migrate", "uuid", "chrono", "time"] }
-async-trait = "0.1.52"
-uuid = { version = "0.8", features = ["v4", "serde"] }
-dotenv = "0.15.0"
-chrono = "0.4"
-sea-query = { git = "https://github.com/SeaQL/sea-query.git", branch = "master", features = ["sqlx-postgres"] }
 serde_with = "1.9.2"
+sqlx = { version = "0.5", features = [ "runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"] }
+tide = "0.16.0"
+
+[dev-dependencies]
 fake = "2.4"
-rand = "0.8"

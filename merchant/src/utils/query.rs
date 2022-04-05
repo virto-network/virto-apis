@@ -10,19 +10,33 @@ pub enum Order {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct QueryOrderBy<TOrderColumn> {
-    pub column: TOrderColumn,
+pub struct OrderBy<F> {
+    pub field: F,
     pub direction: Order,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Query<TQueryOption, TOrderColumn>
+pub struct Query<Opts, OrdF>
 where
-    for<'a> TOrderColumn: serde::Deserialize<'a> + Serialize,
+    for<'a> OrdF: serde::Deserialize<'a> + Serialize,
 {
-    pub limit: Option<i32>,
+    pub limit: Option<u16>,
     #[serde(flatten, with = "order_by_prefix")]
-    pub order_by: Option<QueryOrderBy<TOrderColumn>>,
+    pub order_by: Option<OrderBy<OrdF>>,
     #[serde(flatten)]
-    pub options: TQueryOption,
+    pub options: Opts,
+}
+
+impl<Opts, OrdF> From<()> for Query<Opts, OrdF>
+where
+    Opts: Default,
+    for<'a> OrdF: serde::Deserialize<'a> + Serialize,
+{
+    fn from(_: ()) -> Self {
+        Query {
+            limit: None,
+            order_by: None,
+            options: Default::default(),
+        }
+    }
 }
