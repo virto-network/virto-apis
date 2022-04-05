@@ -1,3 +1,5 @@
+use fake::faker::company::en::Buzzword;
+use merchant::catalog::backend::{Id, SqlCatalogItemVariation};
 use merchant::catalog::models::{Item, ItemCategory, ItemMeasurmentUnits, ItemVariation, Price};
 
 use fake::faker::lorem::en::*;
@@ -16,9 +18,9 @@ pub fn fake_item() -> Item {
     }
 }
 
-pub fn fake_item_variation<T>(item_uuid: T) -> ItemVariation<T> {
+pub fn fake_item_variation(id: &Id) -> SqlCatalogItemVariation {
     ItemVariation {
-        item_uuid,
+        item_id: *id,
         images: vec![],
         enabled: true,
         measurement_units: ItemMeasurmentUnits::Area,
@@ -27,7 +29,7 @@ pub fn fake_item_variation<T>(item_uuid: T) -> ItemVariation<T> {
             amount: (100.0f32..1000.0f32).fake::<f32>(),
             currency: "USD".to_string(),
         },
-        sku: Name(EN).fake(),
+        sku: Buzzword().fake(),
         available_units: 10,
         upc: None,
     }

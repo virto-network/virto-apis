@@ -10,6 +10,7 @@ Welcome to our merchant API, which currently supports:
 
 ### Setup steps
 
-1. Run your postgresql database `docker run --name merchant-api-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres`.
-2. Run the migrations `cargo sqlx migrate run`.
-3. Run the tests `cargo test`.
+1. Install sqlx cli `cargo install sqlx-cli`
+2. Create DB `sqlx migrate run`
+3. Run the migrations `sqlx migrate run`.
+4. Run the tests `cargo test`.

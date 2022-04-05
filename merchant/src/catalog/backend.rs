@@ -1,27 +1,29 @@
 use async_trait::async_trait;
 
-use sea_query::{Cond, Expr, Iden, PostgresQueryBuilder, Query as Qsql};
+use sea_query::{Cond, Expr, Iden, Query as Qsql, SqliteQueryBuilder as QueryBuilder};
 use serde::{Deserialize, Serialize};
-use sqlx::{types::Json, types::Uuid, FromRow, PgPool};
+use sqlx::types::chrono::NaiveDateTime;
+use sqlx::{types::Json, FromRow, SqlitePool as Pool};
 
-sea_query::sea_query_driver_postgres!();
-use sea_query_driver_postgres::{bind_query, bind_query_as};
-
-use super::super::super::utils::query::{Order, Query};
-use super::super::models::{CatalogObject, CatalogObjectDocument, Item};
-use super::super::models::{ItemModification, ItemVariation};
-use super::super::service::{
+use super::super::utils::query::{Order, Query};
+use super::models::{CatalogObject, CatalogObjectDocument, Item};
+use super::models::{ItemModification, ItemVariation};
+use super::service::{
     CatalogCmd, CatalogError, CatalogService, Commander, ListCatalogQueryOptions,
 };
 use crate::catalog::service::{CatalogColumnOrder, IncreaseItemVariationUnitsPayload};
 use sea_query::Order as OrderSql;
 
-pub type SqlUuid = Uuid;
-pub type SqlAccount = String;
-pub type SQlCatalogCmd = CatalogCmd<SqlUuid>;
-pub type SqlCatalogObjectDocument = CatalogObjectDocument<SqlUuid, SqlAccount>;
-pub type SqlCatalogObject = CatalogObject<SqlUuid>;
-pub type SqlCatalogItemVariation = ItemVariation<SqlUuid>;
+sea_query::sea_query_driver_sqlite!();
+use sea_query_driver_sqlite::{bind_query, bind_query_as};
+
+pub type Id = u32;
+pub type Account = String;
+pub type SQlCatalogCmd = CatalogCmd<Id>;
+pub type SqlCatalogObjectDocument = CatalogObjectDocument<Id, Account>;
+pub type SqlCatalogObject = CatalogObject<Id>;
+#[allow(dead_code)]
+pub type SqlCatalogItemVariation = ItemVariation<Id>;
 pub type SqlCatalogQueryOptions = Query<ListCatalogQueryOptions, CatalogColumnOrder>;
 
 impl From<Order> for OrderSql {
@@ -34,11 +36,11 @@ impl From<Order> for OrderSql {
 }
 #[derive(Clone)]
 pub struct CatalogSQLService {
-    pool: Box<PgPool>,
+    pool: Pool,
 }
 
 impl CatalogSQLService {
-    pub fn new(pool: Box<PgPool>) -> Self {
+    pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
@@ -46,6 +48,7 @@ impl CatalogSQLService {
         let (sql, _) = Qsql::insert()
             .into_table(CatalogSchema::Table)
             .columns(vec![
+                CatalogSchema::Id,
                 CatalogSchema::TypeEntry,
                 CatalogSchema::Account,
                 field_data_name,
@@ -54,10 +57,10 @@ impl CatalogSQLService {
                 Expr::value("$1"),
                 Expr::value("$2"),
                 Expr::value("$3"),
+                Expr::value("$4"),
             ])
             .returning(Qsql::select().expr(Expr::asterisk()).take())
-            .build(PostgresQueryBuilder);
-
+            .build(QueryBuilder);
         sql
     }
 
@@ -65,9 +68,8 @@ impl CatalogSQLService {
         let (sql, _) = Qsql::select()
             .expr(Expr::asterisk())
             .from(CatalogSchema::Table)
-            .and_where(Expr::col(CatalogSchema::Account).eq("-1"))
-            .and_where(Expr::cust_with_values("uuid = ?", vec!["-1"]))
-            .build(PostgresQueryBuilder);
+            .and_where(Expr::col(CatalogSchema::Id).eq("-1"))
+            .build(QueryBuilder);
 
         sql
     }
@@ -76,17 +78,16 @@ impl CatalogSQLService {
         let (sql, _) = Qsql::select()
             .expr(Expr::cust("COUNT(1) as count"))
             .from(CatalogSchema::Table)
-            .and_where(Expr::col(CatalogSchema::Account).eq("-1"))
-            .and_where(Expr::cust_with_values("uuid = ?", vec!["-1"]))
-            .build(PostgresQueryBuilder);
-
+            .and_where(Expr::col(CatalogSchema::Id).eq("-1"))
+            //.and_where(Expr::col(CatalogSchema::Account).eq("-1"))
+            .build(QueryBuilder);
         sql
     }
 
     fn get_sql_to_update(&self, field: CatalogSchema, type_entry: &str) -> String {
         let (sql, _) = Qsql::update()
             .table(CatalogSchema::Table)
-            .value_expr(CatalogSchema::Version, Expr::cust("now()"))
+            //.value_expr(CatalogSchema::Version, Expr::cust("now()"))
             .value(field, "-1".into())
             .and_where(Expr::col(CatalogSchema::Account).eq("1"))
             .and_where(Expr::cust(
@@ -97,28 +98,24 @@ impl CatalogSQLService {
                 )
                 .as_ref(),
             ))
-            .and_where(Expr::cust_with_values("uuid = ?", vec!["-1"]))
+            .and_where(Expr::cust_with_values("id = ?", vec!["-1"]))
             .returning(Qsql::select().expr(Expr::asterisk()).take())
-            .build(PostgresQueryBuilder);
+            .build(QueryBuilder);
 
         sql
     }
 }
 
 #[async_trait]
-impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
+impl CatalogService for CatalogSQLService {
+    type Id = Id;
+    type Query = SqlCatalogQueryOptions;
+
     async fn create(
         &self,
-        account: SqlAccount,
-        catalog_entry: &CatalogObject<SqlUuid>,
+        account: Account,
+        catalog_entry: &CatalogObject<Id>,
     ) -> Result<SqlCatalogObjectDocument, CatalogError> {
-        let mut pool = self
-            .pool
-            .clone()
-            .acquire()
-            .await
-            .map_err(|_| CatalogError::DatabaseError)?;
-
         let (data, sql, type_entry) = match catalog_entry {
             CatalogObject::Item(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
@@ -128,7 +125,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
             CatalogObject::Variation(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_create(CatalogSchema::ItemVariationData);
-                if !self.exists(account.to_string(), entry.item_uuid).await? {
+                if !self.exists(account.to_string(), entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql, "Variation")
@@ -136,14 +133,21 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
             CatalogObject::Modification(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_create(CatalogSchema::ItemModificationData);
-                if !self.exists(account.to_string(), entry.item_uuid).await? {
+                if !self.exists(account.to_string(), entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql, "Modification")
             }
         };
 
+        let mut pool = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|_| CatalogError::DatabaseError)?;
+
         let result: CatalogObjectRow = sqlx::query_as(sql.as_str())
+            .bind(rand::random::<Id>())
             .bind(type_entry)
             .bind(account)
             .bind(Json(data))
@@ -154,21 +158,20 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
         Ok(result.to_catalog_entry_document()?)
     }
 
-    async fn exists(&self, account: SqlAccount, uuid: SqlUuid) -> Result<bool, CatalogError> {
+    async fn exists(&self, _account: Account, id: Id) -> Result<bool, CatalogError> {
         let mut pool = self
             .pool
-            .clone()
             .acquire()
             .await
             .map_err(|_| CatalogError::DatabaseError)?;
 
         let catalog_row: Count = sqlx::query_as(self.get_sql_to_exists().as_str())
-            .bind(account)
-            .bind(uuid)
+            .bind(id)
+            //.bind(account)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
-                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(uuid.to_string()),
+                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
                 _ => CatalogError::DatabaseError,
             })?;
 
@@ -177,22 +180,20 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
 
     async fn read(
         &self,
-        account: SqlAccount,
-        uuid: SqlUuid,
+        _account: Account,
+        id: Id,
     ) -> Result<SqlCatalogObjectDocument, CatalogError> {
         let mut pool = self
             .pool
-            .clone()
             .acquire()
             .await
             .map_err(|_| CatalogError::DatabaseError)?;
         let catalog_row: CatalogObjectRow = sqlx::query_as(self.get_sql_to_read().as_str())
-            .bind(account)
-            .bind(uuid)
+            .bind(id)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
-                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(uuid.to_string()),
+                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
                 _ => CatalogError::DatabaseError,
             })?;
 
@@ -201,17 +202,10 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
 
     async fn update(
         &self,
-        account: SqlAccount,
-        uuid: SqlUuid,
-        catalog_entry: &CatalogObject<SqlUuid>,
+        account: Account,
+        id: Id,
+        catalog_entry: &CatalogObject<Id>,
     ) -> Result<SqlCatalogObjectDocument, CatalogError> {
-        let mut pool = self
-            .pool
-            .clone()
-            .acquire()
-            .await
-            .map_err(|_| CatalogError::DatabaseError)?;
-
         let (data, sql) = match catalog_entry {
             CatalogObject::Item(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
@@ -221,7 +215,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
             CatalogObject::Variation(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_update(CatalogSchema::ItemVariationData, "Variation");
-                if !self.exists(account.to_string(), entry.item_uuid).await? {
+                if !self.exists(account.to_string(), entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql)
@@ -230,21 +224,27 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql =
                     self.get_sql_to_update(CatalogSchema::ItemModificationData, "Modification");
-                if !self.exists(account.to_string(), entry.item_uuid).await? {
+                if !self.exists(account.to_string(), entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql)
             }
         };
 
+        let mut pool = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|_| CatalogError::DatabaseError)?;
+
         let result: CatalogObjectRow = sqlx::query_as(sql.as_str())
             .bind(Json(data))
             .bind(account.as_str())
-            .bind(uuid)
+            .bind(id)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
-                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(uuid.to_string()),
+                sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
                 _ => CatalogError::DatabaseError,
             })?;
 
@@ -253,21 +253,14 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
 
     async fn list(
         &self,
-        account: SqlAccount,
-        query: &SqlCatalogQueryOptions,
+        account: Account,
+        query: &Self::Query,
     ) -> Result<Vec<SqlCatalogObjectDocument>, CatalogError> {
-        let mut pool = self
-            .pool
-            .clone()
-            .acquire()
-            .await
-            .map_err(|_| CatalogError::DatabaseError)?;
-
         let name_is_like_expr = |name: &str| {
             Cond::any()
                 .add(Expr::cust_with_values(
                     format!(
-                        "{} ->> 'name' LIKE ?",
+                        "json_extract({}, '$.name') LIKE ?",
                         CatalogSchema::ItemData.to_string().as_str()
                     )
                     .as_str(),
@@ -275,7 +268,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 ))
                 .add(Expr::cust_with_values(
                     format!(
-                        "{} ->> 'name' LIKE ?",
+                        "json_extract({}, '$.name') LIKE ?",
                         CatalogSchema::ItemVariationData.to_string().as_str()
                     )
                     .as_str(),
@@ -288,7 +281,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
             .from(CatalogSchema::Table)
             .and_where(Expr::col(CatalogSchema::Account).eq(account.to_string()))
             .conditions(
-                matches!(query.options.name, Some(_)),
+                query.options.name.is_some(),
                 |q| {
                     let name = query.options.name.as_ref().unwrap();
                     q.cond_where(name_is_like_expr(name.as_str()));
@@ -296,7 +289,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 |_| {},
             )
             .conditions(
-                matches!(query.options.tags, Some(_)),
+                query.options.tags.is_some(),
                 |q| {
                     let tags = query.options.tags.as_ref().unwrap();
                     let value_array = serde_json::to_value(tags)
@@ -307,7 +300,7 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                         .unwrap();
                     q.cond_where(Expr::cust_with_values(
                         format!(
-                            "({} ->> 'tags')::jsonb @> ?::jsonb",
+                            "json_extract({}, '$.tags') LIKE ?",
                             CatalogSchema::ItemData.to_string()
                         )
                         .as_str(),
@@ -317,12 +310,12 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 |_| {},
             )
             .conditions(
-                matches!(query.options.max_price, Some(_)),
+                query.options.max_price.is_some(),
                 |q| {
                     let max_price = query.options.max_price.unwrap();
                     q.cond_where(Expr::cust_with_values(
                         format!(
-                            "({} ->> 'price_amount')::real <= ?",
+                            "json_extract({}, '$.price_amount') <= ?",
                             CatalogSchema::ItemVariationData.to_string()
                         )
                         .as_str(),
@@ -332,12 +325,12 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 |_| {},
             )
             .conditions(
-                matches!(query.options.min_price, Some(_)),
+                query.options.min_price.is_some(),
                 |q| {
                     let min_price = query.options.min_price.unwrap();
                     q.cond_where(Expr::cust_with_values(
                         format!(
-                            "({} ->> 'price_amount')::real >= ?",
+                            "json_extract({}, '$.price_amount') >= ?",
                             CatalogSchema::ItemVariationData.to_string()
                         )
                         .as_str(),
@@ -347,15 +340,15 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 |_| {},
             )
             .conditions(
-                matches!(query.order_by, Some(_)),
+                query.order_by.is_some(),
                 |q| {
                     let order_by = query.order_by.as_ref().unwrap();
-                    match order_by.column {
+                    match order_by.field {
                         CatalogColumnOrder::Price => {
                             q.order_by_expr(
                                 Expr::cust(
                                     format!(
-                                        "({} ->> 'price_amount')::real",
+                                        "json_extract({}, '$.price_amount')",
                                         CatalogSchema::ItemVariationData.to_string()
                                     )
                                     .as_str(),
@@ -373,7 +366,13 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
                 },
                 |_| {},
             )
-            .build(PostgresQueryBuilder);
+            .build(QueryBuilder);
+
+        let mut pool = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|_| CatalogError::DatabaseError)?;
 
         let result: Vec<CatalogObjectRow> = bind_query_as(sqlx::query_as(&sql), &values)
             .fetch_all(&mut pool)
@@ -381,28 +380,27 @@ impl CatalogService<SqlUuid, SqlAccount> for CatalogSQLService {
             .map_err(|_| CatalogError::DatabaseError)?;
 
         Ok(result
-            .iter()
+            .into_iter()
             .map(|x| x.to_catalog_entry_document().unwrap())
             .collect())
     }
 }
 
 async fn increase_item_variation_units(
-    pool: Box<PgPool>,
-    account: SqlAccount,
-    options: &IncreaseItemVariationUnitsPayload<SqlUuid>,
+    pool: &Pool,
+    account: Account,
+    options: &IncreaseItemVariationUnitsPayload<Id>,
 ) -> Result<(), CatalogError> {
     let mut tx = pool
-        .clone()
         .begin()
         .await
         .map_err(|_| CatalogError::DatabaseError)?;
 
     let sql_increase_expr = format!(
-        "jsonb_set({coloumn_name}, '{{available_units}}', (
-      COALESCE({coloumn_name} #> '{{available_units}}', '0')::int + ?
-    )::text::jsonb)",
-        coloumn_name = CatalogSchema::ItemVariationData.to_string()
+        "json_set({col_name}, '$.available_units', (
+          json_extract({col_name}, '$.available_units') + ?
+        ))",
+        col_name = CatalogSchema::ItemVariationData.to_string()
     );
 
     let (sql, values) = Qsql::update()
@@ -412,11 +410,11 @@ async fn increase_item_variation_units(
             Expr::cust_with_values(sql_increase_expr.as_str(), vec![options.units]),
         )
         .and_where(Expr::cust_with_values(
-            "uuid::text = ?",
-            vec![options.uuid.to_string()],
+            "id = ?",
+            vec![options.id.to_string()],
         ))
         .and_where(Expr::col(CatalogSchema::Account).eq(account.to_string()))
-        .build(PostgresQueryBuilder);
+        .build(QueryBuilder);
 
     bind_query(sqlx::query(&sql), &values)
         .execute(&mut tx)
@@ -428,12 +426,14 @@ async fn increase_item_variation_units(
 }
 
 #[async_trait]
-impl Commander<SqlAccount> for CatalogSQLService {
-    type Cmd = CatalogCmd<SqlUuid>;
-    async fn cmd(&self, account: SqlAccount, cmd: Self::Cmd) -> Result<(), CatalogError> {
+impl Commander for CatalogSQLService {
+    type Cmd = CatalogCmd<Id>;
+    type Account = Account;
+
+    async fn cmd(&self, account: Self::Account, cmd: Self::Cmd) -> Result<(), CatalogError> {
         match cmd {
             Self::Cmd::IncreaseItemVariationUnits(options) => {
-                increase_item_variation_units(Box::clone(&self.pool), account, &options).await?;
+                increase_item_variation_units(&self.pool, account, &options).await?;
                 Ok(())
             }
         }
@@ -445,25 +445,22 @@ struct Count {
 }
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct CatalogObjectRow {
-    pub uuid: Uuid,
+    pub id: Id,
     pub account: String,
-    pub version: chrono::NaiveDateTime,
+    pub version: NaiveDateTime,
     pub type_entry: String,
     pub item_data: Option<Json<Item>>,
-    pub item_variation_data: Option<Json<ItemVariation<SqlUuid>>>,
-    pub item_modification_data: Option<Json<ItemModification<SqlUuid>>>,
-    pub created_at: chrono::NaiveDateTime,
+    pub item_variation_data: Option<Json<ItemVariation<Id>>>,
+    pub item_modification_data: Option<Json<ItemModification<Id>>>,
+    pub created_at: NaiveDateTime,
 }
 
 impl CatalogObjectRow {
-    pub fn to_catalog_entry(&self) -> Result<CatalogObject<SqlUuid>, CatalogError> {
+    pub fn to_catalog_entry(&self) -> Result<CatalogObject<Id>, CatalogError> {
         let mut value = serde_json::Map::new();
         let type_entry_str: &str = self.type_entry.as_str();
 
-        value.insert(
-            "type".to_string(),
-            serde_json::Value::String(type_entry_str.to_string()),
-        );
+        value.insert("type".to_string(), type_entry_str.into());
 
         let data = match Some(type_entry_str) {
             Some("Item") => serde_json::to_value(self.item_data.as_ref().unwrap()),
@@ -477,19 +474,19 @@ impl CatalogObjectRow {
 
         value.insert("data".to_string(), data?);
 
-        let value: CatalogObject<SqlUuid> =
-            serde_json::from_value(serde_json::Value::Object(value))
-                .map_err(|_| CatalogError::MappingError)?;
+        let value: CatalogObject<Id> = serde_json::from_value(serde_json::Value::Object(value))
+            .map_err(|_| CatalogError::MappingError)?;
 
         Ok(value)
     }
 
-    pub fn to_catalog_entry_document(&self) -> Result<SqlCatalogObjectDocument, CatalogError> {
+    pub fn to_catalog_entry_document(self) -> Result<SqlCatalogObjectDocument, CatalogError> {
+        let entry = self.to_catalog_entry()?;
         Ok(SqlCatalogObjectDocument {
-            account: self.account.clone(),
+            account: self.account,
             created_at: self.created_at,
-            catalog_object: self.to_catalog_entry()?,
-            uuid: self.uuid,
+            catalog_object: entry,
+            id: self.id,
             version: self.version,
         })
     }
@@ -497,10 +494,10 @@ impl CatalogObjectRow {
 
 pub enum CatalogSchema {
     Table,
-    Uuid,
+    Id,
     Account,
     TypeEntry,
-    Version,
+    _Version,
     ItemData,
     ItemVariationData,
     ItemModificationData,
@@ -514,13 +511,13 @@ impl Iden for CatalogSchema {
             "{}",
             match self {
                 Self::Table => "catalogs",
-                Self::Uuid => "uuid",
+                Self::Id => "id",
                 Self::Account => "account",
                 Self::ItemData => "item_data",
                 Self::ItemVariationData => "item_variation_data",
                 Self::ItemModificationData => "item_modification_data",
                 Self::TypeEntry => "type_entry",
-                Self::Version => "version",
+                Self::_Version => "version",
                 Self::CreatedAt => "created_at",
             }
         )
