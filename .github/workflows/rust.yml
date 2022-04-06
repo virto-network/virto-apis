@@ -25,4 +25,5 @@ jobs:
     - name: Release please
       uses: google-github-actions/release-please-action@v3.1.2
       with:
+        path: server
         release-type: rust
