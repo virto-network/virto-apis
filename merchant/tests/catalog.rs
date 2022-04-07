@@ -1,12 +1,14 @@
 mod fixtures;
 mod utils;
 
+use merchant::catalog::backend::Account;
+use merchant::catalog::models::{CatalogObjectDocument, ItemModification, ItemVariation};
 use sqlx::types::chrono::NaiveDateTime;
 use utils::InstanceOf;
 use utils::{check_if_error_is, restore_db, AnyHow};
 
 use async_std::task::sleep;
-use fixtures::catalog::{fake_item, fake_item_variation};
+use fixtures::catalog::{fake_item, fake_item_variation, fake_item_modification};
 use std::time::Duration;
 
 use catalog::backend::{
@@ -25,13 +27,13 @@ type Id = u32;
 
 const CATALOG_ACCOUNT: &str = "account";
 
-pub fn check_catalog_object_document(catalog: &SqlCatalogObjectDocument) {
+pub fn check_catalog_object_document<T: 'static>(catalog: &CatalogObjectDocument<T, Account>) {
     assert!(
         catalog.version.instance_of::<NaiveDateTime>(),
         "it should be an instance of NaiveDateTime"
     );
     assert!(
-        catalog.id.instance_of::<Id>(),
+        catalog.id.instance_of::<T>(),
         "it should be a instance of Id"
     );
     assert!(
@@ -75,9 +77,9 @@ pub fn check_item_document(catalog: &SqlCatalogObjectDocument, item_object: &Ite
     }
 }
 
-pub fn check_variation_document(
-    catalog: &SqlCatalogObjectDocument,
-    variation: &SqlCatalogItemVariation,
+pub fn check_variation_document<T: 'static, Y: 'static>(
+    catalog: &CatalogObjectDocument<T, Account>,
+    variation: &ItemVariation<Y>,
 ) {
     check_catalog_object_document(catalog);
     assert!(
@@ -90,19 +92,44 @@ pub fn check_variation_document(
                 v.images.instance_of::<Vec<Image>>(),
                 "it should be a vector of images"
             );
-            assert!(v.item_id.instance_of::<Id>(), "it should be an id");
+            assert!(v.item_id.instance_of::<T>(), "it should be an id");
             assert!(
                 v.measurement_units.instance_of::<ItemMeasurmentUnits>(),
                 "it should be an id"
             );
             assert_eq!(v.images, variation.images);
-            assert_eq!(v.item_id, variation.item_id);
+            // assert_eq!(v.item_id, variation.item_id);
             assert_eq!(v.measurement_units, variation.measurement_units);
             assert_eq!(v.name, variation.name);
             assert_eq!(v.price, variation.price);
             assert_eq!(v.sku, variation.sku);
             assert_eq!(v.available_units, variation.available_units);
             assert_eq!(v.upc, variation.upc);
+        }
+        _ => panic!("catalog_object should be an item"),
+    }
+}
+
+pub fn check_modification_document<T: 'static, Y: 'static>(
+    catalog: &CatalogObjectDocument<T, Account>,
+    modification: &ItemModification<Y>,
+) {
+    check_catalog_object_document(catalog);
+    assert!(
+        matches!(catalog.catalog_object, CatalogObject::Modification(_)),
+        "the catalog object should be an Modification"
+    );
+    match &catalog.catalog_object {
+        CatalogObject::Modification(m) => {
+            assert!(
+                m.images.instance_of::<Vec<Image>>(),
+                "it should be a vector of images"
+            );
+            assert!(m.item_id.instance_of::<T>(), "it should be a valid id");
+            assert_eq!(m.images, modification.images);
+            // assert_eq!(m.item_id, modification.item_id);
+            assert_eq!(m.name, modification.name);
+            assert_eq!(m.price, modification.price);
         }
         _ => panic!("catalog_object should be an item"),
     }
@@ -228,7 +255,7 @@ pub mod item_variation_test {
         let pool = restore_db().await?;
         let catalog_service = CatalogSQLService::new(pool);
         let item_doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&item_doc.id);
+        let variation = fake_item_variation(item_doc.id);
         let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
         check_variation_document(&variation_doc, &variation);
         Ok(())
@@ -238,7 +265,7 @@ pub mod item_variation_test {
     async fn create_item_variation_fails_if_not_exists_item_id() -> Result<(), AnyHow> {
         let pool = restore_db().await?;
         let catalog_service = CatalogSQLService::new(pool);
-        let variation = fake_item_variation(&Id::default());
+        let variation = fake_item_variation(Id::default());
         let result = make_variation(&catalog_service, variation).await;
         check_if_error_is(result.unwrap_err(), CatalogError::CatalogBadRequest);
         Ok(())
@@ -249,8 +276,8 @@ pub mod item_variation_test {
         let catalog_service = CatalogSQLService::new(pool);
         let item = fake_item();
         let item_doc = make_item(&catalog_service, item).await?;
-        let variation = fake_item_variation(&item_doc.id);
-        let variation_new = fake_item_variation(&item_doc.id);
+        let variation = fake_item_variation(item_doc.id);
+        let variation_new = fake_item_variation(item_doc.id);
         let catalog_variation_document =
             make_variation(&catalog_service, variation.clone()).await?;
         check_variation_document(&catalog_variation_document, &variation);
@@ -277,8 +304,8 @@ pub mod item_variation_test {
         let pool = restore_db().await?;
         let catalog_service = CatalogSQLService::new(pool);
         let catalog_item_document = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&catalog_item_document.id);
-        let variation_new = fake_item_variation(&Id::default());
+        let variation = fake_item_variation(catalog_item_document.id);
+        let variation_new = fake_item_variation(Id::default());
         let catalog_variation_document =
             make_variation(&catalog_service, variation.clone()).await?;
         check_variation_document(&catalog_variation_document, &variation);
@@ -298,7 +325,7 @@ pub mod item_variation_test {
         let pool = restore_db().await?;
         let catalog_service = CatalogSQLService::new(pool);
         let item_doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&item_doc.id);
+        let variation = fake_item_variation(item_doc.id);
         let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
         check_variation_document(&variation_doc, &variation);
         let read_catalog_variation = catalog_service
@@ -362,14 +389,14 @@ pub mod item_find_test {
         let catalog_service = CatalogSQLService::new(pool);
         let item_doc = make_item(&catalog_service, fake_item()).await?;
         //let item = doc.catalog_object.item().unwrap();
-        let mut variation = fake_item_variation(&item_doc.id);
+        let mut variation = fake_item_variation(item_doc.id);
         variation.price = Price::Fixed {
             amount: 2000.0f32,
             currency: "USD".to_string(),
         };
 
         let variation_document = make_variation(&catalog_service, variation.clone()).await?;
-        let mut variation_two = fake_item_variation(&item_doc.id);
+        let mut variation_two = fake_item_variation(item_doc.id);
         check_variation_document(&variation_document, &variation);
 
         variation_two.price = Price::Fixed {
@@ -523,7 +550,7 @@ pub mod item_find_test {
             .await?;
         assert_eq!(items_found.len(), 1);
         let item_found = &items_found[0];
-        check_item_document(item_found, &item);
+        check_item_document(item_found, item);
         Ok(())
     }
 }
@@ -537,7 +564,7 @@ pub mod catalog_cmd {
         let pool = restore_db().await?;
         let catalog_service = CatalogSQLService::new(pool);
         let doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&doc.id);
+        let variation = fake_item_variation(doc.id);
         let variation_document = make_variation(&catalog_service, variation.clone()).await?;
         check_variation_document(&variation_document, &variation);
 
@@ -583,6 +610,61 @@ pub mod catalog_cmd {
         )
         .unwrap();
         assert_eq!(read_variation.available_units, variation.available_units);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub mod bulk_test {
+    use merchant::catalog::models::{CatalogObjectBulkDocument, CatalogObjectDocument};
+
+    use super::*;
+
+    #[async_std::test]
+    async fn create_bulk() -> Result<(), AnyHow> {
+        let pool = restore_db().await?;
+        let catalog_service = CatalogSQLService::new(pool);
+
+        let item_a = Box::new(fake_item());
+        let variation_a_for_a = Box::new(fake_item_variation("#item-1".to_string()));
+        let modification_a_for_a = Box::new(fake_item_modification("#item-1".to_string()));
+
+        let items: Vec<CatalogObjectBulkDocument<String>> = vec![
+            CatalogObjectBulkDocument {
+                id: Some("#item-1".to_string()),
+                catalog_object: CatalogObject::Item(*item_a.clone())
+            },
+            CatalogObjectBulkDocument {
+                id: None,
+                catalog_object: CatalogObject::Variation(*variation_a_for_a.clone())
+            },
+            CatalogObjectBulkDocument {
+                id: None,
+                catalog_object: CatalogObject::Modification(*modification_a_for_a.clone())
+            },
+        ];
+
+        let items_docs = catalog_service.bulk_create(CATALOG_ACCOUNT.to_string(), items).await?;
+        for item_doc in items_docs.iter() {
+            match &item_doc.catalog_object {
+                CatalogObject::Item(_) => {
+                    check_item_document(item_doc, &item_a);
+                },
+                CatalogObject::Modification(_) => {
+                    check_modification_document(
+                        item_doc,
+                        &modification_a_for_a,
+                    );
+                },
+                CatalogObject::Variation(_) => {
+                    check_variation_document(
+                        item_doc,
+                        &variation_a_for_a,
+                    );
+                }
+             }
+        }
+
         Ok(())
     }
 }

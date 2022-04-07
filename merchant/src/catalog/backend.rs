@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 
 use sea_query::{Cond, Expr, Iden, Query as Qsql, SqliteQueryBuilder as QueryBuilder};
@@ -6,10 +8,13 @@ use sqlx::types::chrono::NaiveDateTime;
 use sqlx::{types::Json, FromRow, SqlitePool as Pool};
 
 use super::super::utils::query::{Order, Query};
-use super::models::{CatalogObject, CatalogObjectDocument, Item};
-use super::models::{ItemModification, ItemVariation};
+use super::models::{
+    CatalogObject, CatalogObjectBulkDocument, CatalogObjectDocument, Item, ItemModification,
+    ItemVariation,
+};
 use super::service::{
-    CatalogCmd, CatalogError, CatalogService, Commander, ListCatalogQueryOptions,
+    BulkDocumentConverter, CatalogCmd, CatalogError, CatalogService, Commander,
+    ListCatalogQueryOptions,
 };
 use crate::catalog::service::{CatalogColumnOrder, IncreaseItemVariationUnitsPayload};
 use sea_query::Order as OrderSql;
@@ -20,10 +25,12 @@ use sea_query_driver_sqlite::{bind_query, bind_query_as};
 pub type Id = u32;
 pub type Account = String;
 pub type SQlCatalogCmd = CatalogCmd<Id>;
-pub type SqlCatalogObjectDocument = CatalogObjectDocument<Id, Account>;
 pub type SqlCatalogObject = CatalogObject<Id>;
+pub type SqlCatalogObjectDocument = CatalogObjectDocument<Id, Account>;
 #[allow(dead_code)]
 pub type SqlCatalogItemVariation = ItemVariation<Id>;
+#[allow(dead_code)]
+pub type SqlCatalogObjectBulkDocument = CatalogObjectBulkDocument<Id>;
 pub type SqlCatalogQueryOptions = Query<ListCatalogQueryOptions, CatalogColumnOrder>;
 
 impl From<Order> for OrderSql {
@@ -31,6 +38,60 @@ impl From<Order> for OrderSql {
         match order_service {
             Order::Asc => OrderSql::Asc,
             Order::Desc => OrderSql::Desc,
+        }
+    }
+}
+
+impl BulkDocumentConverter for CatalogSQLService {
+    type Id = Id;
+    fn to_simple_catalog_object(
+        id: Self::Id,
+        catalog: &CatalogObject<String>,
+    ) -> Result<CatalogObject<Self::Id>, CatalogError> {
+        match catalog {
+            CatalogObject::Item(item) => Ok(CatalogObject::Item(item.clone())),
+            CatalogObject::Modification(modification) => {
+                let ItemModification {
+                    enabled,
+                    images,
+                    name,
+                    price,
+                    ..
+                } = modification;
+
+                Ok(CatalogObject::Modification(ItemModification {
+                    enabled: *enabled,
+                    images: images.clone(),
+                    item_id: id,
+                    name: name.clone(),
+                    price: price.clone(),
+                }))
+            }
+            CatalogObject::Variation(variation) => {
+                let ItemVariation {
+                    available_units,
+                    enabled,
+                    images,
+                    measurement_units,
+                    name,
+                    price,
+                    sku,
+                    upc,
+                    ..
+                } = variation;
+
+                Ok(CatalogObject::Variation(ItemVariation {
+                    available_units: *available_units,
+                    enabled: *enabled,
+                    images: images.clone(),
+                    item_id: id,
+                    measurement_units: measurement_units.clone(),
+                    name: name.clone(),
+                    price: price.clone(),
+                    sku: sku.clone(),
+                    upc: upc.clone(),
+                }))
+            }
         }
     }
 }
@@ -156,6 +217,98 @@ impl CatalogService for CatalogSQLService {
             .map_err(|_| CatalogError::MappingError)?;
 
         Ok(result.to_catalog_entry_document()?)
+    }
+
+    async fn bulk_create(
+        &self,
+        account: Account,
+        catalog: Vec<CatalogObjectBulkDocument<String>>,
+    ) -> Result<Vec<SqlCatalogObjectDocument>, CatalogError> {
+        let mut objects_created: HashMap<String, SqlCatalogObjectDocument> = HashMap::new();
+        let mut objects_dependency: HashMap<String, u32> = HashMap::new();
+        let mut objects_dependency_document: HashMap<String, &CatalogObject<String>> =
+            HashMap::new();
+
+        // we count all references to the dependency
+
+        for (index, item) in catalog.iter().enumerate() {
+            let key_id = match &item.id {
+                Some(id) => make_id_by_alias(id),
+                None => make_id_by_index(index.try_into().unwrap()),
+            };
+
+            objects_dependency.entry(key_id.clone()).or_insert(0);
+            objects_dependency_document
+                .entry(key_id)
+                .or_insert(&item.catalog_object);
+
+            match &item.catalog_object {
+                CatalogObject::Variation(entry) => {
+                    let key = make_id_by_alias(&entry.item_id);
+                    objects_dependency.entry(key).and_modify(|e| *e += 1);
+                }
+                CatalogObject::Modification(entry) => {
+                    let key = make_id_by_alias(&entry.item_id);
+                    objects_dependency.entry(key).and_modify(|e| *e += 1);
+                }
+                _ => {}
+            }
+        }
+
+        let mut items_sorted_to_insert: Vec<(&String, &u32)> = objects_dependency.iter().collect();
+        items_sorted_to_insert.sort_by(|a, b| b.1.cmp(a.1));
+        // we start creating the dependencies from the less dependant
+        for (alias_id, _) in items_sorted_to_insert.clone() {
+            let item = *objects_dependency_document.get(alias_id).unwrap();
+            match item {
+                CatalogObject::Item(item) => {
+                    let catalog_object: CatalogObject<self::Id> =
+                        CatalogObject::<u32>::Item(item.clone());
+                    let document = self.create(account.clone(), &catalog_object).await?;
+                    objects_created.entry(alias_id.clone()).or_insert(document);
+                }
+                CatalogObject::Variation(variation) => {
+                    if let Some(catalog_object) = objects_created.get(&variation.item_id.clone()) {
+                        let catalog_object =
+                            <Self as BulkDocumentConverter>::to_simple_catalog_object(
+                                catalog_object.id,
+                                &CatalogObject::Variation(variation.clone()),
+                            )
+                            .unwrap();
+                        let document = self.create(account.clone(), &catalog_object).await?;
+                        objects_created.entry(alias_id.clone()).or_insert(document);
+                    } else {
+                        return Err(CatalogError::BulkReferenceNotExist(
+                            variation.item_id.clone(),
+                        ));
+                    }
+                }
+                CatalogObject::Modification(modification) => {
+                    if let Some(catalog_object  ) = objects_created.get(&modification.item_id.clone())
+                    {
+                        let catalog_object =
+                            <Self as BulkDocumentConverter>::to_simple_catalog_object(
+                                catalog_object.id,
+                                &CatalogObject::Modification(modification.clone()),
+                            )
+                            .unwrap();
+                        let document = self.create(account.clone(), &catalog_object).await?;
+                        objects_created.entry(alias_id.clone()).or_insert(document);
+                    } else {
+                        return Err(CatalogError::BulkReferenceNotExist(
+                            modification.item_id.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let objects_created: Vec<SqlCatalogObjectDocument> = items_sorted_to_insert
+            .iter()
+            .map(|(id, _)| objects_created.remove(&(*id).clone()).unwrap())
+            .collect();
+
+        Ok(objects_created)
     }
 
     async fn exists(&self, _account: Account, id: Id) -> Result<bool, CatalogError> {
@@ -423,6 +576,14 @@ async fn increase_item_variation_units(
 
     tx.commit().await.map_err(|_| CatalogError::DatabaseError)?;
     Ok(())
+}
+
+fn make_id_by_alias(id: &str) -> String {
+    return format!("{}", id);
+}
+
+fn make_id_by_index(id: Id) -> String {
+    return format!("#{}-index", id);
 }
 
 #[async_trait]

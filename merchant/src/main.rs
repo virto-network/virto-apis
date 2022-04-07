@@ -4,7 +4,9 @@ mod utils;
 use catalog::{
     backend::{CatalogSQLService, SQlCatalogCmd, SqlCatalogObject, SqlCatalogQueryOptions},
     service::{CatalogError, CatalogService, Commander},
+    models::{CatalogObjectBulkDocument}
 };
+
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{migrate::Migrator, SqlitePool as Pool};
@@ -32,6 +34,15 @@ fn wrap_result<T: Serialize>(
             Ok(res)
         }
         Err(err) => match err {
+            CatalogError::BulkReferenceNotExist(id) => {
+                let mut res = Response::new(400);
+                res.set_body(json!({
+                  "success": false,
+                  "error": "E_BULK_ACTION",
+                  "error_message": format!("not found the item {}", id)
+                }));
+                Ok(res)
+            }
             CatalogError::CatalogEntryNotFound(id) => {
                 let mut res = Response::new(400);
                 res.set_body(json!({
@@ -116,6 +127,19 @@ async fn update(mut request: Request<MyState>) -> tide::Result {
     Ok(wrap_result(&result).unwrap())
 }
 
+async fn bulk_create(mut request: Request<MyState>) -> tide::Result {
+    let catalog: Vec<CatalogObjectBulkDocument<String>> = request.body_json().await?;
+    let account_id = request.param("account")?;
+    println!("Bulk-Create({}) - {:?}", account_id, catalog);
+    let id = request.param("id")?;
+    let state = request.state().clone();
+    let service = state.catalog_service.clone();
+    let result = service
+        .bulk_create(account_id.to_string(), catalog)
+        .await;
+    Ok(wrap_result(&result).unwrap())
+}
+
 async fn cmd(mut request: Request<MyState>) -> tide::Result {
     let cmd: SQlCatalogCmd = request.body_json().await?;
     let account_id = request.param("account")?;
@@ -149,6 +173,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get(|_| async move { Ok(json!({ "version": "1" })) });
 
     app.at("/catalog/:account").get(list).post(create);
+
+    app.at("/catalog/:account/_bulk").post(bulk_create);
 
     app.at("/catalog/:account/:id").get(read).put(update);
 
