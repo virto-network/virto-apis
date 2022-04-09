@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -56,6 +57,8 @@ impl BulkDocumentConverter for CatalogSQLService {
                     images,
                     name,
                     price,
+                    processing_time,
+                    warranty_time,
                     ..
                 } = modification;
 
@@ -65,6 +68,8 @@ impl BulkDocumentConverter for CatalogSQLService {
                     item_id: id,
                     name: name.clone(),
                     price: price.clone(),
+                    processing_time: None,
+                    warranty_time: None,
                 }))
             }
             CatalogObject::Variation(variation) => {
