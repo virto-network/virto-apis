@@ -1,6 +1,8 @@
 use fake::faker::company::en::Buzzword;
 use merchant::catalog::backend::{Id, SqlCatalogItemVariation};
-use merchant::catalog::models::{Item, ItemCategory, ItemMeasurmentUnits, ItemVariation, Price, ItemModification};
+use merchant::catalog::models::{
+    Item, ItemCategory, ItemMeasurmentUnits, ItemModification, ItemVariation, Price,
+};
 
 use fake::faker::lorem::en::*;
 use fake::faker::name::raw::*;
