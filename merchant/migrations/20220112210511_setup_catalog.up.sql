@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS Catalogs
     item_variation_data JSONB DEFAULT NULL,
     item_modification_data JSONB DEFAULT NULL,
     item_delivery_data JSONB DEFAULT NULL,
+    item_control_data JSONB DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -15,3 +16,4 @@ CREATE INDEX IF NOT EXISTS item_index ON Catalogs (item_data);
 CREATE INDEX IF NOT EXISTS item_variation_index ON Catalogs (item_variation_data);
 CREATE INDEX IF NOT EXISTS item_modification_index ON Catalogs (item_modification_data);
 CREATE INDEX IF NOT EXISTS item_delivery_index ON Catalogs (item_delivery_data);
+CREATE INDEX IF NOT EXISTS item_control_index ON Catalogs (item_control_data);

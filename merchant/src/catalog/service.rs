@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use super::models::{CatalogObject, CatalogObjectBulkDocument, CatalogObjectDocument};
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ pub enum CatalogCmd<Id> {
 pub trait Commander {
     type Account;
     type Cmd;
-    async fn cmd(&self, account: Self::Account, cmd: Self::Cmd) -> Result<(), CatalogError>;
+    async fn cmd(&self, account: &Self::Account, cmd: Self::Cmd) -> Result<(), CatalogError>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -37,54 +37,54 @@ pub enum CatalogColumnOrder {
     Price,
 }
 
-pub trait BulkDocumentConverter {
+pub trait BulkDocumentReferencesResolver {
     type Id;
-    fn to_simple_catalog_object(
-        id: Self::Id,
+    fn resolve(
+        idMap: &HashMap<&str, Self::Id>,
         catalog: &CatalogObject<String>,
     ) -> Result<CatalogObject<Self::Id>, CatalogError>;
 }
 
-type CatalogId<Trait> = <Trait as CatalogService>::Id;
+pub type CatalogId<Trait> = <Trait as CatalogService>::Id;
 #[async_trait]
-pub trait CatalogService: BulkDocumentConverter<Id = CatalogId<Self>> + Commander {
+pub trait CatalogService: BulkDocumentReferencesResolver<Id = CatalogId<Self>> + Commander {
     type Id;
     type Query: Send;
 
     async fn create(
         &self,
-        account: Self::Account,
+        account: &Self::Account,
         catalog: &CatalogObject<CatalogId<Self>>,
     ) -> Result<CatalogObjectDocument<CatalogId<Self>, Self::Account>, CatalogError>;
 
     async fn bulk_create(
         &self,
-        account: Self::Account,
-        catalog: Vec<CatalogObjectBulkDocument<String>>, // we use string type for Id to enable referecing
+        account: &Self::Account,
+        catalog: &Vec<CatalogObjectBulkDocument<String>>, // we use string type for Id to enable referecing
     ) -> Result<Vec<CatalogObjectDocument<CatalogId<Self>, Self::Account>>, CatalogError>;
 
     async fn exists(
         &self,
-        account: Self::Account,
-        id: CatalogId<Self>,
+        account: &Self::Account,
+        id: &CatalogId<Self>,
     ) -> Result<bool, CatalogError>;
 
     async fn read(
         &self,
-        account: Self::Account,
-        id: CatalogId<Self>,
+        account: &Self::Account,
+        id: &CatalogId<Self>,
     ) -> Result<CatalogObjectDocument<CatalogId<Self>, Self::Account>, CatalogError>;
 
     async fn update(
         &self,
-        account: Self::Account,
-        id: CatalogId<Self>,
+        account: &Self::Account,
+        id: &CatalogId<Self>,
         catalog_document: &CatalogObject<CatalogId<Self>>,
     ) -> Result<CatalogObjectDocument<CatalogId<Self>, Self::Account>, CatalogError>;
 
     async fn list(
         &self,
-        account: Self::Account,
+        account: &Self::Account,
         query: &Self::Query,
     ) -> Result<Vec<CatalogObjectDocument<CatalogId<Self>, Self::Account>>, CatalogError>;
 }

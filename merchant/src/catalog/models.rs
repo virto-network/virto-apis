@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_with::with_prefix;
@@ -8,6 +11,7 @@ with_prefix!(price_prefix "price_");
 with_prefix!(warranty_prefix "warranty_time_");
 with_prefix!(processing_prefix "processing_time_");
 with_prefix!(delivery_prefix "delivery_");
+with_prefix!(control_prefix "control_");
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ItemMeasurmentUnits {
@@ -50,7 +54,6 @@ pub enum Price {
     Fixed { amount: f32, currency: String },
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd, Eq)]
 #[serde(tag = "type")]
 pub enum Time {
@@ -72,7 +75,7 @@ pub struct Item {
     pub warranty_time: Option<Time>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemVariation<Id> {
     pub item_id: Id,
     pub name: String,
@@ -87,10 +90,10 @@ pub struct ItemVariation<Id> {
     #[serde(flatten, with = "price_prefix")]
     pub price: Price,
     // #[serde(flatten)]
-    pub extra_attributes: Option<HashMap<String, String>>
+    pub extra_attributes: Option<HashMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemModification<Id> {
     pub item_id: Id,
     pub name: String,
@@ -107,77 +110,79 @@ pub struct ItemModification<Id> {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(tag = "type")]
 pub enum Delivery {
-  Shipping { width_mm: i32, length_mm: i32, height_mm: i32, weight_grams: i32 },
+    Shipping {
+        width_mm: i32,
+        length_mm: i32,
+        height_mm: i32,
+        weight_grams: i32,
+    },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemDelivery<Id> {
     pub item_id: Id,
     #[serde(flatten, with = "delivery_prefix")]
-    pub delivery: Delivery
+    pub delivery: Delivery,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ControlOption {
-  value: String,
-  name: String
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct MatrixProp {
+    pub name: String,
+    pub options: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Prop {
-  name: String,
-  options: Vec<ControlOption>
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MatrixControl<Id> {
-  matrix_map: HashMap<String, Id>,
-  key_template: String,
-  props: Vec<Prop>
+    pub combinations: HashMap<String, Id>,
+    pub key_template: String,
+    pub props: Vec<MatrixProp>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CommonFormItem {
-  name: String
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type")]
 pub enum FormItem {
-  Text(CommonFormItem),
-  Email(CommonFormItem),
-  Password(CommonFormItem)
+    Text(HashMap<String, String>),
+    Email(HashMap<String, String>),
+    Password(HashMap<String, String>),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FormControl<Id> {
-  item_id: Id,
-  form: Vec<FormItem>
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", content = "data")]
 pub enum Control<Id> {
-  Matrix(MatrixControl<Id>),
-  Form(FormControl<Id>)
+    Matrix(MatrixControl<Id>),
+    Form(Vec<FormItem>),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemControl<Id> {
     pub item_id: Id,
-    #[serde(flatten, with = "delivery_prefix")]
-    pub control: Control<Id>
+    #[serde(flatten, with = "control_prefix")]
+    pub control: Control<Id>,
 }
 
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum CatalogObject<Id> {
     Item(Item),
     Variation(ItemVariation<Id>),
     Modification(ItemModification<Id>),
     Delivery(ItemDelivery<Id>),
-    Control(ItemControl<Id>)
+    Control(ItemControl<Id>),
 }
 
+impl<Id> Display for CatalogObject<Id> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Item(_) => write!(f, "Item"),
+            Self::Variation(_) => write!(f, "Variation"),
+            Self::Modification(_) => write!(f, "Modification"),
+            Self::Delivery(_) => write!(f, "Delivery"),
+            Self::Control(_) => write!(f, "Control"),
+        }
+    }
+}
+
+// TODO: see if we  need to remove
 #[allow(dead_code)]
 impl<Id> CatalogObject<Id> {
     pub fn item(&self) -> Option<&Item> {
