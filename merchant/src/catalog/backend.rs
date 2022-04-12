@@ -223,7 +223,7 @@ impl CatalogService for CatalogSQLService {
 
         for (index, item) in catalog.iter().enumerate() {
             let key_id = match &item.id {
-                Some(id) => make_id_by_alias(id),
+                Some(id) => id.clone(),
                 None => make_id_by_index(index.try_into().unwrap()),
             };
 
@@ -235,7 +235,7 @@ impl CatalogService for CatalogSQLService {
             match &item.catalog_object {
                 CatalogObject::Variation(ItemVariation { item_id, .. })
                 | CatalogObject::Modification(ItemModification { item_id, .. }) => {
-                    let key = make_id_by_alias(item_id);
+                    let key = item_id.clone();
                     objects_dependency_count.entry(key).and_modify(|e| *e += 1);
                 }
                 _ => {}
@@ -556,10 +556,6 @@ async fn increase_item_variation_units(
 
     tx.commit().await.map_err(|_| CatalogError::DatabaseError)?;
     Ok(())
-}
-
-fn make_id_by_alias(id: &str) -> String {
-    return format!("{}", id);
 }
 
 fn make_id_by_index(id: Id) -> String {
