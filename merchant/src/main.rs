@@ -10,7 +10,11 @@ use catalog::{
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{migrate::Migrator, SqlitePool as Pool};
-use tide::{Body, Request, Response};
+use tide::{
+    http::headers::HeaderValue,
+    security::{CorsMiddleware, Origin},
+    Body, Request, Response,
+};
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 #[derive(Clone)]
@@ -165,6 +169,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Pool::connect(&db_file).await?;
     MIGRATOR.run(&conn).await?;
     let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
+
+    app.with(
+        CorsMiddleware::new()
+            .allow_methods("GET, POST, PUT, OPTIONS".parse::<HeaderValue>().unwrap())
+            .allow_origin(Origin::from("*"))
+            .allow_credentials(false),
+    );
 
     app.at("/")
         .get(|_| async move { Ok(json!({ "version": "1" })) });
