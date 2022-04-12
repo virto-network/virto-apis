@@ -72,7 +72,7 @@ pub struct ItemVariation<Id> {
     pub price: Price,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ItemModification<Id> {
     pub item_id: Id,
     pub name: String,
@@ -106,6 +106,13 @@ pub struct CatalogObjectDocument<Id, Account> {
     pub account: Account,
     pub version: NaiveDateTime,
     pub created_at: NaiveDateTime,
+    #[serde(flatten)]
+    pub catalog_object: CatalogObject<Id>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CatalogObjectBulkDocument<Id> {
+    pub id: Option<Id>,
     #[serde(flatten)]
     pub catalog_object: CatalogObject<Id>,
 }
