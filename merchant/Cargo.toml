@@ -1,18 +1,18 @@
 [package]
 name = "merchant"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.52"
 rand = "0.8"
 sea-query = { version = "0.23.0", features = ["sqlx-sqlite"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", default-features = false }
+sqlx = { version = "0.5", features = ["runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"] }
+common = { path = "../common" }
 serde_with = "1.9.2"
-sqlx = { version = "0.5", features = [ "runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"] }
-tide = "0.16.0"
 
 [dev-dependencies]
+async-std = { version = "1.8.0", features = ["attributes"] }
 fake = "2.4"

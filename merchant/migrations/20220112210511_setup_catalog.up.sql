@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS Catalogs
     id INT PRIMARY KEY NOT NULL,
     account VARCHAR(30) NOT NUll,
     type_entry VARCHAR(20) NOT NULL,
-    version TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    version SMALLINT DEFAULT CURRENT_TIMESTAMP NOT NULL,
     item_data JSONB DEFAULT NULL,
     item_variation_data JSONB DEFAULT NULL,
     item_modification_data JSONB DEFAULT NULL,

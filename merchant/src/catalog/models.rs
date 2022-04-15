@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_with::with_prefix;
-use sqlx::types::chrono::NaiveDateTime;
 
 with_prefix!(price_prefix "price_");
+
+pub type Timestamp = u32;
+pub type Version = u16;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ItemMeasurmentUnits {
@@ -90,6 +92,22 @@ pub enum CatalogObject<Id> {
     Modification(ItemModification<Id>),
 }
 
+impl<Id> From<Item> for CatalogObject<Id> {
+    fn from(it: Item) -> Self {
+        Self::Item(it)
+    }
+}
+impl<Id> From<ItemVariation<Id>> for CatalogObject<Id> {
+    fn from(v: ItemVariation<Id>) -> Self {
+        Self::Variation(v)
+    }
+}
+impl<Id> From<ItemModification<Id>> for CatalogObject<Id> {
+    fn from(m: ItemModification<Id>) -> Self {
+        Self::Modification(m)
+    }
+}
+
 #[allow(dead_code)]
 impl<Id> CatalogObject<Id> {
     pub fn item(&self) -> Option<&Item> {
@@ -104,8 +122,8 @@ impl<Id> CatalogObject<Id> {
 pub struct CatalogObjectDocument<Id, Account> {
     pub id: Id,
     pub account: Account,
-    pub version: NaiveDateTime,
-    pub created_at: NaiveDateTime,
+    pub version: Version,
+    pub created_at: Timestamp,
     #[serde(flatten)]
     pub catalog_object: CatalogObject<Id>,
 }

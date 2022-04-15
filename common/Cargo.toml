@@ -1,0 +1,13 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+erased-serde = { version = "0.3.20", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+serde_with = { version = "1.9.2", default-features = false, optional = true }
+
+[features]
+default = ["query"]
+query = ["serde", "serde_with"]

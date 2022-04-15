@@ -5,41 +5,29 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::{types::Json, FromRow, SqlitePool as Pool};
 
-use super::super::utils::query::{Order, Query};
-use super::models::{CatalogObject, CatalogObjectDocument, Item};
-use super::models::{ItemModification, ItemVariation};
-use super::service::{
-    CatalogCmd, CatalogError, CatalogService, Commander, ListCatalogQueryOptions,
-};
-use crate::catalog::service::{CatalogColumnOrder, IncreaseItemVariationUnitsPayload};
+use super::models;
+
+use super::{CatalogError, CatalogService, OrderField};
 use sea_query::Order as OrderSql;
+
+pub type CatalogObject = models::CatalogObject<Id>;
+pub type CatalogObjectDocument = models::CatalogObjectDocument<Id, Account>;
+#[allow(dead_code)]
+pub type ItemVariation = models::ItemVariation<Id>;
+pub type ItemModification = models::ItemModification<Id>;
 
 sea_query::sea_query_driver_sqlite!();
 use sea_query_driver_sqlite::{bind_query, bind_query_as};
 
 pub type Id = u32;
 pub type Account = String;
-pub type SQlCatalogCmd = CatalogCmd<Id>;
-pub type SqlCatalogObjectDocument = CatalogObjectDocument<Id, Account>;
-pub type SqlCatalogObject = CatalogObject<Id>;
-#[allow(dead_code)]
-pub type SqlCatalogItemVariation = ItemVariation<Id>;
-pub type SqlCatalogQueryOptions = Query<ListCatalogQueryOptions, CatalogColumnOrder>;
 
-impl From<Order> for OrderSql {
-    fn from(order_service: Order) -> Self {
-        match order_service {
-            Order::Asc => OrderSql::Asc,
-            Order::Desc => OrderSql::Desc,
-        }
-    }
-}
 #[derive(Clone)]
-pub struct CatalogSQLService {
+pub struct Catalog {
     pool: Pool,
 }
 
-impl CatalogSQLService {
+impl Catalog {
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
@@ -79,7 +67,6 @@ impl CatalogSQLService {
             .expr(Expr::cust("COUNT(1) as count"))
             .from(CatalogSchema::Table)
             .and_where(Expr::col(CatalogSchema::Id).eq("-1"))
-            //.and_where(Expr::col(CatalogSchema::Account).eq("-1"))
             .build(QueryBuilder);
         sql
     }
@@ -87,9 +74,7 @@ impl CatalogSQLService {
     fn get_sql_to_update(&self, field: CatalogSchema, type_entry: &str) -> String {
         let (sql, _) = Qsql::update()
             .table(CatalogSchema::Table)
-            //.value_expr(CatalogSchema::Version, Expr::cust("now()"))
             .value(field, "-1".into())
-            .and_where(Expr::col(CatalogSchema::Account).eq("1"))
             .and_where(Expr::cust(
                 format!(
                     "{} = '{}'",
@@ -104,18 +89,57 @@ impl CatalogSQLService {
 
         sql
     }
+
+    pub(crate) async fn increase_item_variation_units(
+        &self,
+        options: &super::IncreaseItemVariationUnitsPayload<Id>,
+    ) -> Result<(), CatalogError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| CatalogError::StorageError)?;
+
+        let sql_increase_expr = format!(
+            "json_set({col_name}, '$.available_units', (
+          json_extract({col_name}, '$.available_units') + ?
+        ))",
+            col_name = CatalogSchema::ItemVariationData.to_string()
+        );
+
+        let (sql, values) = Qsql::update()
+            .table(CatalogSchema::Table)
+            .value_expr(
+                CatalogSchema::ItemVariationData,
+                Expr::cust_with_values(sql_increase_expr.as_str(), vec![options.units]),
+            )
+            .and_where(Expr::cust_with_values(
+                "id = ?",
+                vec![options.id.to_string()],
+            ))
+            .build(QueryBuilder);
+
+        bind_query(sqlx::query(&sql), &values)
+            .execute(&mut tx)
+            .await
+            .map_err(|_| CatalogError::StorageError)?;
+
+        tx.commit().await.map_err(|_| CatalogError::StorageError)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
-impl CatalogService for CatalogSQLService {
+impl CatalogService for Catalog {
     type Id = Id;
-    type Query = SqlCatalogQueryOptions;
+    type Query = crate::Query;
+    type Account = Account;
 
     async fn create(
         &self,
-        account: Account,
-        catalog_entry: &CatalogObject<Id>,
-    ) -> Result<SqlCatalogObjectDocument, CatalogError> {
+        account: &Self::Account,
+        catalog_entry: &CatalogObject,
+    ) -> Result<CatalogObjectDocument, CatalogError> {
         let (data, sql, type_entry) = match catalog_entry {
             CatalogObject::Item(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
@@ -125,7 +149,7 @@ impl CatalogService for CatalogSQLService {
             CatalogObject::Variation(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_create(CatalogSchema::ItemVariationData);
-                if !self.exists(account.to_string(), entry.item_id).await? {
+                if !self.exists(&entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql, "Variation")
@@ -133,7 +157,7 @@ impl CatalogService for CatalogSQLService {
             CatalogObject::Modification(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_create(CatalogSchema::ItemModificationData);
-                if !self.exists(account.to_string(), entry.item_id).await? {
+                if !self.exists(&entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql, "Modification")
@@ -144,7 +168,7 @@ impl CatalogService for CatalogSQLService {
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
 
         let result: CatalogObjectRow = sqlx::query_as(sql.as_str())
             .bind(rand::random::<Id>())
@@ -158,43 +182,38 @@ impl CatalogService for CatalogSQLService {
         Ok(result.to_catalog_entry_document()?)
     }
 
-    async fn exists(&self, _account: Account, id: Id) -> Result<bool, CatalogError> {
+    async fn exists(&self, id: &Id) -> Result<bool, CatalogError> {
         let mut pool = self
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
 
         let catalog_row: Count = sqlx::query_as(self.get_sql_to_exists().as_str())
             .bind(id)
-            //.bind(account)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
                 sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
-                _ => CatalogError::DatabaseError,
+                _ => CatalogError::StorageError,
             })?;
 
         Ok(catalog_row.count != 0)
     }
 
-    async fn read(
-        &self,
-        _account: Account,
-        id: Id,
-    ) -> Result<SqlCatalogObjectDocument, CatalogError> {
+    async fn read(&self, id: Id) -> Result<CatalogObjectDocument, CatalogError> {
         let mut pool = self
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
         let catalog_row: CatalogObjectRow = sqlx::query_as(self.get_sql_to_read().as_str())
             .bind(id)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
                 sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
-                _ => CatalogError::DatabaseError,
+                _ => CatalogError::StorageError,
             })?;
 
         Ok(catalog_row.to_catalog_entry_document()?)
@@ -202,10 +221,9 @@ impl CatalogService for CatalogSQLService {
 
     async fn update(
         &self,
-        account: Account,
         id: Id,
-        catalog_entry: &CatalogObject<Id>,
-    ) -> Result<SqlCatalogObjectDocument, CatalogError> {
+        catalog_entry: &CatalogObject,
+    ) -> Result<CatalogObjectDocument, CatalogError> {
         let (data, sql) = match catalog_entry {
             CatalogObject::Item(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
@@ -215,7 +233,7 @@ impl CatalogService for CatalogSQLService {
             CatalogObject::Variation(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_update(CatalogSchema::ItemVariationData, "Variation");
-                if !self.exists(account.to_string(), entry.item_id).await? {
+                if !self.exists(&entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql)
@@ -224,7 +242,7 @@ impl CatalogService for CatalogSQLService {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql =
                     self.get_sql_to_update(CatalogSchema::ItemModificationData, "Modification");
-                if !self.exists(account.to_string(), entry.item_id).await? {
+                if !self.exists(&entry.item_id).await? {
                     return Err(CatalogError::CatalogBadRequest);
                 }
                 (data, sql)
@@ -235,17 +253,16 @@ impl CatalogService for CatalogSQLService {
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
 
         let result: CatalogObjectRow = sqlx::query_as(sql.as_str())
             .bind(Json(data))
-            .bind(account.as_str())
             .bind(id)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
                 sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
-                _ => CatalogError::DatabaseError,
+                _ => CatalogError::StorageError,
             })?;
 
         Ok(result.to_catalog_entry_document()?)
@@ -253,9 +270,9 @@ impl CatalogService for CatalogSQLService {
 
     async fn list(
         &self,
-        account: Account,
+        account: &Self::Account,
         query: &Self::Query,
-    ) -> Result<Vec<SqlCatalogObjectDocument>, CatalogError> {
+    ) -> Result<Vec<CatalogObjectDocument>, CatalogError> {
         let name_is_like_expr = |name: &str| {
             Cond::any()
                 .add(Expr::cust_with_values(
@@ -279,7 +296,7 @@ impl CatalogService for CatalogSQLService {
         let (sql, values) = Qsql::select()
             .expr(Expr::asterisk())
             .from(CatalogSchema::Table)
-            .and_where(Expr::col(CatalogSchema::Account).eq(account.to_string()))
+            .and_where(Expr::col(CatalogSchema::Account).eq(account.as_str()))
             .conditions(
                 query.options.name.is_some(),
                 |q| {
@@ -344,7 +361,7 @@ impl CatalogService for CatalogSQLService {
                 |q| {
                     let order_by = query.order_by.as_ref().unwrap();
                     match order_by.field {
-                        CatalogColumnOrder::Price => {
+                        OrderField::Price => {
                             q.order_by_expr(
                                 Expr::cust(
                                     format!(
@@ -353,13 +370,13 @@ impl CatalogService for CatalogSQLService {
                                     )
                                     .as_str(),
                                 ),
-                                OrderSql::from(order_by.direction),
+                                OrderSql::from(to_sql_ord(order_by.direction)),
                             );
                         }
-                        CatalogColumnOrder::CreatedAt => {
+                        OrderField::CreatedAt => {
                             q.order_by_expr(
                                 Expr::cust(CatalogSchema::CreatedAt.to_string().as_str()),
-                                OrderSql::from(order_by.direction),
+                                OrderSql::from(to_sql_ord(order_by.direction)),
                             );
                         }
                     };
@@ -372,12 +389,12 @@ impl CatalogService for CatalogSQLService {
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
 
         let result: Vec<CatalogObjectRow> = bind_query_as(sqlx::query_as(&sql), &values)
             .fetch_all(&mut pool)
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|_| CatalogError::StorageError)?;
 
         Ok(result
             .into_iter()
@@ -386,77 +403,31 @@ impl CatalogService for CatalogSQLService {
     }
 }
 
-async fn increase_item_variation_units(
-    pool: &Pool,
-    account: Account,
-    options: &IncreaseItemVariationUnitsPayload<Id>,
-) -> Result<(), CatalogError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|_| CatalogError::DatabaseError)?;
-
-    let sql_increase_expr = format!(
-        "json_set({col_name}, '$.available_units', (
-          json_extract({col_name}, '$.available_units') + ?
-        ))",
-        col_name = CatalogSchema::ItemVariationData.to_string()
-    );
-
-    let (sql, values) = Qsql::update()
-        .table(CatalogSchema::Table)
-        .value_expr(
-            CatalogSchema::ItemVariationData,
-            Expr::cust_with_values(sql_increase_expr.as_str(), vec![options.units]),
-        )
-        .and_where(Expr::cust_with_values(
-            "id = ?",
-            vec![options.id.to_string()],
-        ))
-        .and_where(Expr::col(CatalogSchema::Account).eq(account.to_string()))
-        .build(QueryBuilder);
-
-    bind_query(sqlx::query(&sql), &values)
-        .execute(&mut tx)
-        .await
-        .map_err(|_| CatalogError::DatabaseError)?;
-
-    tx.commit().await.map_err(|_| CatalogError::DatabaseError)?;
-    Ok(())
-}
-
-#[async_trait]
-impl Commander for CatalogSQLService {
-    type Cmd = CatalogCmd<Id>;
-    type Account = Account;
-
-    async fn cmd(&self, account: Self::Account, cmd: Self::Cmd) -> Result<(), CatalogError> {
-        match cmd {
-            Self::Cmd::IncreaseItemVariationUnits(options) => {
-                increase_item_variation_units(&self.pool, account, &options).await?;
-                Ok(())
-            }
-        }
+fn to_sql_ord(ord: common::query::Order) -> sea_query::Order {
+    match ord {
+        common::query::Order::Asc => sea_query::Order::Asc,
+        common::query::Order::Desc => sea_query::Order::Desc,
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 struct Count {
     count: i64,
 }
-#[derive(Serialize, Deserialize, Debug, FromRow)]
+#[derive(Debug, FromRow)]
 pub struct CatalogObjectRow {
     pub id: Id,
     pub account: String,
-    pub version: NaiveDateTime,
+    pub version: u16,
     pub type_entry: String,
-    pub item_data: Option<Json<Item>>,
-    pub item_variation_data: Option<Json<ItemVariation<Id>>>,
-    pub item_modification_data: Option<Json<ItemModification<Id>>>,
+    pub item_data: Option<Json<models::Item>>,
+    pub item_variation_data: Option<Json<ItemVariation>>,
+    pub item_modification_data: Option<Json<ItemModification>>,
     pub created_at: NaiveDateTime,
 }
 
 impl CatalogObjectRow {
-    pub fn to_catalog_entry(&self) -> Result<CatalogObject<Id>, CatalogError> {
+    pub fn to_catalog_entry(&self) -> Result<CatalogObject, CatalogError> {
         let mut value = serde_json::Map::new();
         let type_entry_str: &str = self.type_entry.as_str();
 
@@ -474,17 +445,17 @@ impl CatalogObjectRow {
 
         value.insert("data".to_string(), data?);
 
-        let value: CatalogObject<Id> = serde_json::from_value(serde_json::Value::Object(value))
+        let value: CatalogObject = serde_json::from_value(serde_json::Value::Object(value))
             .map_err(|_| CatalogError::MappingError)?;
 
         Ok(value)
     }
 
-    pub fn to_catalog_entry_document(self) -> Result<SqlCatalogObjectDocument, CatalogError> {
+    pub fn to_catalog_entry_document(self) -> Result<CatalogObjectDocument, CatalogError> {
         let entry = self.to_catalog_entry()?;
-        Ok(SqlCatalogObjectDocument {
+        Ok(CatalogObjectDocument {
             account: self.account,
-            created_at: self.created_at,
+            created_at: self.created_at.timestamp() as u32,
             catalog_object: entry,
             id: self.id,
             version: self.version,

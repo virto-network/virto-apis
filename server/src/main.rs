@@ -1,8 +1,5 @@
-mod catalog;
-mod utils;
-
-use catalog::{
-    backend::{CatalogSQLService, SQlCatalogCmd, SqlCatalogObject, SqlCatalogQueryOptions},
+use merchant::catalog::{
+    backend::{Catalog, SQlCatalogCmd, SqlCatalogObject, SqlCatalogQueryOptions},
     service::{CatalogError, CatalogService, Commander},
 };
 use serde::Serialize;
@@ -13,11 +10,11 @@ use tide::{Body, Request, Response};
 static MIGRATOR: Migrator = sqlx::migrate!();
 #[derive(Clone)]
 struct MyState {
-    catalog_service: CatalogSQLService,
+    catalog_service: Catalog,
 }
 
 impl MyState {
-    fn new(catalog_service: CatalogSQLService) -> Self {
+    fn new(catalog_service: Catalog) -> Self {
         Self { catalog_service }
     }
 }
@@ -50,7 +47,7 @@ fn wrap_result<T: Serialize>(
                 }));
                 Ok(res)
             }
-            CatalogError::DatabaseError => {
+            CatalogError::StorageError => {
                 let mut res = Response::new(500);
                 res.set_body(json!({
                   "success": false,
@@ -143,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let conn = Pool::connect(&db_file).await?;
     MIGRATOR.run(&conn).await?;
-    let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
+    let mut app = tide::with_state(MyState::new(Catalog::new(conn)));
 
     app.at("/")
         .get(|_| async move { Ok(json!({ "version": "1" })) });

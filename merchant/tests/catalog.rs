@@ -1,52 +1,23 @@
 mod fixtures;
 mod utils;
 
-use sqlx::types::chrono::NaiveDateTime;
-use utils::InstanceOf;
-use utils::{check_if_error_is, restore_db, AnyHow};
+use utils::{new_context, AnyHow};
+use utils::{send, InstanceOf};
 
 use async_std::task::sleep;
 use fixtures::catalog::{fake_item, fake_item_variation};
 use std::time::Duration;
 
-use catalog::backend::{
-    CatalogSQLService, SqlCatalogItemVariation, SqlCatalogObject, SqlCatalogObjectDocument,
-    SqlCatalogQueryOptions,
+use catalog::{
+    CatalogObject, CatalogObjectDocument, Image, IncreaseItemVariationUnitsPayload, Item,
+    ItemCategory, ItemMeasurmentUnits, ItemVariation, OrderField,
 };
-use catalog::models::{CatalogObject, Image, Item, ItemCategory, ItemMeasurmentUnits};
-use catalog::service::{
-    CatalogCmd, CatalogColumnOrder, CatalogService, Commander, IncreaseItemVariationUnitsPayload,
-};
-use merchant::catalog;
-use merchant::catalog::service::CatalogError;
-use merchant::utils::query::{Order, OrderBy};
-//use sqlx::types::;
+use merchant::catalog::CatalogError;
+use merchant::{catalog, Context, Error, Msg};
+
 type Id = u32;
 
-const CATALOG_ACCOUNT: &str = "account";
-
-pub fn check_catalog_object_document(catalog: &SqlCatalogObjectDocument) {
-    assert!(
-        catalog.version.instance_of::<NaiveDateTime>(),
-        "it should be an instance of NaiveDateTime"
-    );
-    assert!(
-        catalog.id.instance_of::<Id>(),
-        "it should be a instance of Id"
-    );
-    assert!(
-        catalog.account.instance_of::<String>(),
-        "the accoutn property should be an str"
-    );
-    assert!(catalog.created_at.instance_of::<NaiveDateTime>());
-}
-
-pub fn check_item_document(catalog: &SqlCatalogObjectDocument, item_object: &Item) {
-    check_catalog_object_document(catalog);
-    assert!(
-        matches!(catalog.catalog_object, CatalogObject::Item(_)),
-        "the catalog object should be an item"
-    );
+pub fn check_item_document(catalog: &CatalogObjectDocument, item_object: &Item) {
     match &catalog.catalog_object {
         CatalogObject::Item(item) => {
             assert!(
@@ -75,15 +46,7 @@ pub fn check_item_document(catalog: &SqlCatalogObjectDocument, item_object: &Ite
     }
 }
 
-pub fn check_variation_document(
-    catalog: &SqlCatalogObjectDocument,
-    variation: &SqlCatalogItemVariation,
-) {
-    check_catalog_object_document(catalog);
-    assert!(
-        matches!(catalog.catalog_object, CatalogObject::Variation(_)),
-        "the catalog object should be an Variation"
-    );
+pub fn check_variation_document(catalog: &CatalogObjectDocument, variation: &ItemVariation) {
     match &catalog.catalog_object {
         CatalogObject::Variation(v) => {
             assert!(
@@ -108,115 +71,76 @@ pub fn check_variation_document(
     }
 }
 
-pub async fn make_item(
-    catalog_service: &CatalogSQLService,
-    item: Item,
-) -> Result<SqlCatalogObjectDocument, AnyHow> {
-    let entry = SqlCatalogObject::Item(item);
-    let catalog_entry_document = catalog_service
-        .create(CATALOG_ACCOUNT.to_string(), &entry)
-        .await?;
-    Ok(catalog_entry_document)
-}
-
-pub async fn make_variation(
-    catalog_service: &CatalogSQLService,
-    variation: SqlCatalogItemVariation,
-) -> Result<SqlCatalogObjectDocument, CatalogError> {
-    let entry = SqlCatalogObject::Variation(variation);
-    let catalog_entry_document = catalog_service
-        .create(CATALOG_ACCOUNT.to_string(), &entry)
-        .await?;
-    Ok(catalog_entry_document)
+async fn make(
+    cx: &mut Context,
+    item: impl Into<CatalogObject>,
+) -> Result<CatalogObjectDocument, Error> {
+    Ok(send(cx, Msg::CatalogCreate(item.into())).await?)
 }
 
 #[cfg(test)]
 pub mod item_test {
+    use merchant::Error;
+
     use super::*;
 
     #[async_std::test]
     async fn create_item() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let entry = SqlCatalogObject::Item(fake_item());
-        let catalog_entry_document = catalog_service
-            .create(CATALOG_ACCOUNT.to_string(), &entry)
-            .await?;
-        check_item_document(&catalog_entry_document, entry.item().unwrap());
+        let mut cx = new_context().await?;
+        let item = fake_item();
+        let doc: CatalogObjectDocument =
+            send(&mut cx, Msg::CatalogCreate(item.clone().into())).await?;
+        check_item_document(&doc, &item);
         Ok(())
     }
 
     #[async_std::test]
     async fn update_item() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
+        let mut cx = new_context().await?;
         let item_old = fake_item();
         let item_new = fake_item();
-        let item_doc = make_item(&catalog_service, item_old.clone()).await?;
+
+        let item_doc = make(&mut cx, item_old.clone()).await?;
         check_item_document(&item_doc, &item_old);
-        let updated_catalog_item = catalog_service
-            .update(
-                CATALOG_ACCOUNT.to_string(),
-                item_doc.id,
-                &SqlCatalogObject::Item(item_new.clone()),
-            )
-            .await?;
-        check_item_document(&updated_catalog_item, &item_new);
-        let item_created =
-            as_value!(updated_catalog_item.catalog_object, SqlCatalogObject::Item).unwrap();
+
+        let updated_item: CatalogObjectDocument = send(
+            &mut cx,
+            Msg::CatalogUpdate(item_doc.id, item_new.clone().into()),
+        )
+        .await?;
+        check_item_document(&updated_item, &item_new);
+
+        let item_created = as_value!(updated_item.catalog_object, CatalogObject::Item).unwrap();
         assert_ne!(item_created.name, item_old.name);
         assert_eq!(item_created.name, item_new.name);
         Ok(())
     }
 
     #[async_std::test]
-    async fn read_item() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
+    async fn query_item() -> Result<(), AnyHow> {
+        let mut cx = new_context().await?;
 
-        let item_doc = make_item(&catalog_service, fake_item()).await?;
-        let item = item_doc.catalog_object.item().unwrap();
+        let item = fake_item();
+        let item_doc = make(&mut cx, item.clone()).await?;
         check_item_document(&item_doc, &item);
-        let read_catalog_item = catalog_service
-            .read(CATALOG_ACCOUNT.to_string(), item_doc.id)
-            .await?;
+
+        let read_catalog_item: CatalogObjectDocument = send(&mut cx, item_doc.id).await?;
         check_item_document(&read_catalog_item, &item);
         Ok(())
     }
-}
 
-#[async_std::test]
-async fn check_if_exists() -> Result<(), AnyHow> {
-    let pool = restore_db().await?;
-    let catalog_service = CatalogSQLService::new(pool);
-    let item = fake_item();
-    let catalog_item_document = make_item(&catalog_service, item).await?;
-    assert!(
-        catalog_service
-            .exists(CATALOG_ACCOUNT.to_string(), catalog_item_document.id)
-            .await?,
-        "it should exists"
-    );
-    assert!(
-        !catalog_service
-            .exists(CATALOG_ACCOUNT.to_string(), Id::default())
-            .await?,
-        "it should not exists"
-    );
-    Ok(())
-}
+    #[async_std::test]
+    async fn query_nonexistent_item() -> Result<(), AnyHow> {
+        let mut cx = new_context().await?;
 
-#[async_std::test]
-async fn read_item_fails_if_id_doesnt_exists() -> Result<(), AnyHow> {
-    let pool = restore_db().await?;
-    let catalog_service = CatalogSQLService::new(pool);
-    let id = Id::default();
-    let read_catalog_item = catalog_service.read(CATALOG_ACCOUNT.to_string(), id).await;
-    check_if_error_is(
-        read_catalog_item.unwrap_err(),
-        CatalogError::CatalogEntryNotFound(id.to_string()),
-    );
-    Ok(())
+        let id = Id::default();
+        let read_catalog_err: Result<(), Error> = send(&mut cx, id).await;
+        assert!(matches!(
+            read_catalog_err.unwrap_err(),
+            Error::Catalog(CatalogError::CatalogEntryNotFound(_)),
+        ));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -225,48 +149,44 @@ pub mod item_variation_test {
 
     #[async_std::test]
     async fn create_item_variation() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let item_doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&item_doc.id);
-        let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
+        let mut cx = new_context().await?;
+        let item_doc = make(&mut cx, fake_item()).await?;
+        let variation = fake_item_variation(item_doc.id);
+        let variation_doc = make(&mut cx, variation.clone()).await?;
         check_variation_document(&variation_doc, &variation);
         Ok(())
     }
 
     #[async_std::test]
     async fn create_item_variation_fails_if_not_exists_item_id() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let variation = fake_item_variation(&Id::default());
-        let result = make_variation(&catalog_service, variation).await;
-        check_if_error_is(result.unwrap_err(), CatalogError::CatalogBadRequest);
+        let mut cx = new_context().await?;
+        let variation = fake_item_variation(Id::default());
+        let result = make(&mut cx, variation).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Catalog(CatalogError::CatalogBadRequest)
+        ));
         Ok(())
     }
+
     #[async_std::test]
     async fn update_variation() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
+        let mut cx = new_context().await?;
         let item = fake_item();
-        let item_doc = make_item(&catalog_service, item).await?;
-        let variation = fake_item_variation(&item_doc.id);
-        let variation_new = fake_item_variation(&item_doc.id);
-        let catalog_variation_document =
-            make_variation(&catalog_service, variation.clone()).await?;
-        check_variation_document(&catalog_variation_document, &variation);
-        let updated_catalog_variation = catalog_service
-            .update(
-                CATALOG_ACCOUNT.to_string(),
-                catalog_variation_document.id,
-                &SqlCatalogObject::Variation(variation_new.clone()),
-            )
-            .await?;
-        check_variation_document(&updated_catalog_variation, &variation_new);
-        let variation_updated = as_value!(
-            updated_catalog_variation.catalog_object,
-            SqlCatalogObject::Variation
+        let item_doc = make(&mut cx, item).await?;
+        let variation = fake_item_variation(item_doc.id);
+        let variation_new = fake_item_variation(item_doc.id);
+        let variation_doc = make(&mut cx, variation.clone()).await?;
+        check_variation_document(&variation_doc, &variation);
+
+        let updated_variation: CatalogObjectDocument = send(
+            &mut cx,
+            Msg::CatalogUpdate(variation_doc.id, variation_new.clone().into()),
         )
-        .unwrap();
+        .await?;
+        check_variation_document(&updated_variation, &variation_new);
+        let variation_updated =
+            as_value!(updated_variation.catalog_object, CatalogObject::Variation).unwrap();
         assert_ne!(variation_updated.name, variation.name);
         assert_eq!(variation_updated.name, variation_new.name);
         Ok(())
@@ -274,36 +194,34 @@ pub mod item_variation_test {
 
     #[async_std::test]
     async fn update_variation_fails_if_not_exists_item_id() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let catalog_item_document = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&catalog_item_document.id);
-        let variation_new = fake_item_variation(&Id::default());
-        let catalog_variation_document =
-            make_variation(&catalog_service, variation.clone()).await?;
-        check_variation_document(&catalog_variation_document, &variation);
-        let result = catalog_service
-            .update(
-                CATALOG_ACCOUNT.to_string(),
-                catalog_variation_document.id,
-                &SqlCatalogObject::Variation(variation_new),
-            )
-            .await;
-        check_if_error_is(result.unwrap_err(), CatalogError::CatalogBadRequest);
+        let mut cx = new_context().await?;
+        let catalog_item_document = make(&mut cx, fake_item()).await?;
+        let variation = fake_item_variation(catalog_item_document.id);
+        let variation_new = fake_item_variation(Id::default());
+        let variation_doc = make(&mut cx, variation.clone()).await?;
+        check_variation_document(&variation_doc, &variation);
+
+        let result: Result<(), Error> = send(
+            &mut cx,
+            Msg::CatalogUpdate(variation_doc.id, variation_new.into()),
+        )
+        .await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Catalog(CatalogError::CatalogBadRequest)
+        ));
         Ok(())
     }
 
     #[async_std::test]
     async fn read_item() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let item_doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&item_doc.id);
-        let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
+        let mut cx = new_context().await?;
+        let item_doc = make(&mut cx, fake_item()).await?;
+        let variation = fake_item_variation(item_doc.id);
+        let variation_doc = make(&mut cx, variation.clone()).await?;
         check_variation_document(&variation_doc, &variation);
-        let read_catalog_variation = catalog_service
-            .read(CATALOG_ACCOUNT.to_string(), variation_doc.id)
-            .await?;
+
+        let read_catalog_variation: CatalogObjectDocument = send(&mut cx, variation_doc.id).await?;
         check_variation_document(&read_catalog_variation, &variation);
         Ok(())
     }
@@ -312,19 +230,19 @@ pub mod item_variation_test {
 #[cfg(test)]
 pub mod item_find_test {
     use super::*;
-    use merchant::catalog::{models::Price, service::ListCatalogQueryOptions};
+    use common::query::{Order, OrderBy, Query};
+    use merchant::catalog::{Price, QueryOptions};
 
     #[async_std::test]
     async fn list_item_by_name() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let doc = make_item(&catalog_service, fake_item()).await?;
+        let mut cx = new_context().await?;
+        let doc = make(&mut cx, fake_item()).await?;
         let item = doc.catalog_object.item().unwrap();
 
-        let query_name_not_exists = SqlCatalogQueryOptions {
+        let query_name_not_exists = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: None,
                 name: Some("None".to_string()),
@@ -332,10 +250,10 @@ pub mod item_find_test {
             },
         };
 
-        let query_name_exists = SqlCatalogQueryOptions {
+        let query_name_exists = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: None,
                 name: Some(item.name.clone()),
@@ -343,13 +261,9 @@ pub mod item_find_test {
             },
         };
 
-        let items_empty = catalog_service
-            .list(CATALOG_ACCOUNT.to_string(), &query_name_not_exists)
-            .await?;
+        let items_empty: Vec<CatalogObjectDocument> = send(&mut cx, query_name_not_exists).await?;
         assert_eq!(items_empty.len(), 0);
-        let items_found = catalog_service
-            .list(CATALOG_ACCOUNT.to_string(), &query_name_exists)
-            .await?;
+        let items_found: Vec<CatalogObjectDocument> = send(&mut cx, query_name_exists).await?;
         assert_eq!(items_found.len(), 1);
         let item_found = &items_found[0];
         check_item_document(item_found, &item);
@@ -358,18 +272,16 @@ pub mod item_find_test {
 
     #[async_std::test]
     async fn list_item_by_min_and_max_amount() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let item_doc = make_item(&catalog_service, fake_item()).await?;
-        //let item = doc.catalog_object.item().unwrap();
-        let mut variation = fake_item_variation(&item_doc.id);
+        let mut cx = new_context().await?;
+        let item_doc = make(&mut cx, fake_item()).await?;
+        let mut variation = fake_item_variation(item_doc.id);
         variation.price = Price::Fixed {
             amount: 2000.0f32,
             currency: "USD".to_string(),
         };
 
-        let variation_document = make_variation(&catalog_service, variation.clone()).await?;
-        let mut variation_two = fake_item_variation(&item_doc.id);
+        let variation_document = make(&mut cx, variation.clone()).await?;
+        let mut variation_two = fake_item_variation(item_doc.id);
         check_variation_document(&variation_document, &variation);
 
         variation_two.price = Price::Fixed {
@@ -377,14 +289,13 @@ pub mod item_find_test {
             currency: "USD".to_string(),
         };
 
-        let variation_document_two =
-            make_variation(&catalog_service, variation_two.clone()).await?;
+        let variation_document_two = make(&mut cx, variation_two.clone()).await?;
         check_variation_document(&variation_document_two, &variation_two);
 
-        let min_just_appear_variation_two_query = SqlCatalogQueryOptions {
+        let min_just_appear_variation_two_query = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: Some(5000.0f32),
                 name: None,
@@ -392,13 +303,13 @@ pub mod item_find_test {
             },
         };
 
-        let min_appear_variation_two_and_one = SqlCatalogQueryOptions {
+        let min_appear_variation_two_and_one = Query {
             limit: None,
             order_by: Some(OrderBy {
-                field: CatalogColumnOrder::CreatedAt,
+                field: OrderField::CreatedAt,
                 direction: Order::Asc,
             }),
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: Some(2000.0f32),
                 name: None,
@@ -406,24 +317,15 @@ pub mod item_find_test {
             },
         };
 
-        let items_found_variation_two = catalog_service
-            .list(
-                CATALOG_ACCOUNT.to_string(),
-                &min_just_appear_variation_two_query,
-            )
-            .await?;
+        let items_found_variation_two: Vec<CatalogObjectDocument> =
+            send(&mut cx, min_just_appear_variation_two_query).await?;
 
         assert_eq!(items_found_variation_two.len(), 1);
         let document_variation = &items_found_variation_two[0];
         check_variation_document(document_variation, &variation_two);
 
-        let items_found_variation_one_and_two = catalog_service
-            .list(
-                CATALOG_ACCOUNT.to_string(),
-                &min_appear_variation_two_and_one,
-            )
-            .await?;
-
+        let items_found_variation_one_and_two: Vec<CatalogObjectDocument> =
+            send(&mut cx, min_appear_variation_two_and_one).await?;
         assert_eq!(items_found_variation_one_and_two.len(), 2);
 
         let item_one = &items_found_variation_one_and_two[0];
@@ -432,10 +334,10 @@ pub mod item_find_test {
         check_variation_document(item_one, &variation);
         check_variation_document(item_two, &variation_two);
 
-        let max_just_appear_variation_one_query = SqlCatalogQueryOptions {
+        let max_just_appear_variation_one_query = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: Some(2000.0f32),
                 min_price: None,
                 name: None,
@@ -443,13 +345,13 @@ pub mod item_find_test {
             },
         };
 
-        let max_appear_variation_two_and_one = SqlCatalogQueryOptions {
+        let max_appear_variation_two_and_one = Query {
             limit: None,
             order_by: Some(OrderBy {
-                field: CatalogColumnOrder::CreatedAt,
+                field: OrderField::CreatedAt,
                 direction: Order::Asc,
             }),
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: Some(5000.0f32),
                 min_price: None,
                 name: None,
@@ -457,23 +359,15 @@ pub mod item_find_test {
             },
         };
 
-        let items_found_variation_two = catalog_service
-            .list(
-                CATALOG_ACCOUNT.to_string(),
-                &max_just_appear_variation_one_query,
-            )
-            .await?;
+        let items_found_variation_two: Vec<CatalogObjectDocument> =
+            send(&mut cx, max_just_appear_variation_one_query).await?;
         assert_eq!(items_found_variation_two.len(), 1);
 
         let document_variation = &items_found_variation_two[0];
         check_variation_document(document_variation, &variation);
 
-        let items_found_variation_one_and_two = catalog_service
-            .list(
-                CATALOG_ACCOUNT.to_string(),
-                &max_appear_variation_two_and_one,
-            )
-            .await?;
+        let items_found_variation_one_and_two: Vec<CatalogObjectDocument> =
+            send(&mut cx, max_appear_variation_two_and_one).await?;
         assert_eq!(items_found_variation_one_and_two.len(), 2);
 
         let item_one = &items_found_variation_one_and_two[0];
@@ -487,15 +381,14 @@ pub mod item_find_test {
 
     #[async_std::test]
     async fn list_item_by_tags() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let doc = make_item(&catalog_service, fake_item()).await?;
+        let mut cx = new_context().await?;
+        let doc = make(&mut cx, fake_item()).await?;
         let item = doc.catalog_object.item().unwrap();
 
-        let query_not_exists_tags = SqlCatalogQueryOptions {
+        let query_not_exists_tags = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: None,
                 name: None,
@@ -503,10 +396,10 @@ pub mod item_find_test {
             },
         };
 
-        let query_tags_exists = SqlCatalogQueryOptions {
+        let query_tags_exists = Query {
             limit: None,
             order_by: None,
-            options: ListCatalogQueryOptions {
+            options: QueryOptions {
                 max_price: None,
                 min_price: None,
                 name: None,
@@ -514,13 +407,10 @@ pub mod item_find_test {
             },
         };
 
-        let items_empty = catalog_service
-            .list(CATALOG_ACCOUNT.to_string(), &query_not_exists_tags)
-            .await?;
+        let items_empty: Vec<CatalogObjectDocument> = send(&mut cx, query_not_exists_tags).await?;
         assert_eq!(items_empty.len(), 0);
-        let items_found = catalog_service
-            .list(CATALOG_ACCOUNT.to_string(), &query_tags_exists)
-            .await?;
+
+        let items_found: Vec<CatalogObjectDocument> = send(&mut cx, query_tags_exists).await?;
         assert_eq!(items_found.len(), 1);
         let item_found = &items_found[0];
         check_item_document(item_found, &item);
@@ -534,26 +424,23 @@ pub mod catalog_cmd {
 
     #[async_std::test]
     async fn increase_item_in_variations() -> Result<(), AnyHow> {
-        let pool = restore_db().await?;
-        let catalog_service = CatalogSQLService::new(pool);
-        let doc = make_item(&catalog_service, fake_item()).await?;
-        let variation = fake_item_variation(&doc.id);
-        let variation_document = make_variation(&catalog_service, variation.clone()).await?;
+        let mut cx = new_context().await?;
+        let doc = make(&mut cx, fake_item()).await?;
+        let variation = fake_item_variation(doc.id);
+        let variation_document = make(&mut cx, variation.clone()).await?;
         check_variation_document(&variation_document, &variation);
 
-        let command = CatalogCmd::IncreaseItemVariationUnits(IncreaseItemVariationUnitsPayload {
+        let command = IncreaseItemVariationUnitsPayload {
             id: variation_document.id,
             units: 10,
-        });
+        };
 
-        catalog_service
-            .cmd(CATALOG_ACCOUNT.to_string(), command)
-            .await?;
+        send(&mut cx, command).await?;
 
         sleep(Duration::from_secs(2)).await;
-        let read_catalog_variation = catalog_service
-            .read(CATALOG_ACCOUNT.to_string(), variation_document.id)
-            .await?;
+
+        let read_catalog_variation: CatalogObjectDocument =
+            send(&mut cx, variation_document.id).await?;
         let read_variation = as_value!(
             read_catalog_variation.catalog_object,
             CatalogObject::Variation
@@ -564,19 +451,16 @@ pub mod catalog_cmd {
             variation.available_units + 10
         );
 
-        let command = CatalogCmd::IncreaseItemVariationUnits(IncreaseItemVariationUnitsPayload {
+        let command = IncreaseItemVariationUnitsPayload {
             id: variation_document.id,
             units: -10,
-        });
+        };
 
-        catalog_service
-            .cmd(CATALOG_ACCOUNT.to_string(), command)
-            .await?;
+        send(&mut cx, command).await?;
 
-        sleep(Duration::from_secs(2)).await;
-        let read_catalog_variation = catalog_service
-            .read(CATALOG_ACCOUNT.to_string(), variation_document.id)
-            .await?;
+        sleep(Duration::from_secs(1)).await;
+        let read_catalog_variation: CatalogObjectDocument =
+            send(&mut cx, variation_document.id).await?;
         let read_variation = as_value!(
             read_catalog_variation.catalog_object,
             CatalogObject::Variation

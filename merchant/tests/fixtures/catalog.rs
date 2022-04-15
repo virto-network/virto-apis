@@ -1,6 +1,5 @@
 use fake::faker::company::en::Buzzword;
-use merchant::catalog::backend::{Id, SqlCatalogItemVariation};
-use merchant::catalog::models::{Item, ItemCategory, ItemMeasurmentUnits, ItemVariation, Price};
+use merchant::catalog::{Id, Item, ItemCategory, ItemMeasurmentUnits, ItemVariation, Price};
 
 use fake::faker::lorem::en::*;
 use fake::faker::name::raw::*;
@@ -8,19 +7,18 @@ use fake::locales::*;
 use fake::Fake;
 
 pub fn fake_item() -> Item {
-    let tags: Vec<String> = Words(3..5).fake();
     Item {
         category: ItemCategory::Shop,
-        tags,
+        tags: Words(3..5).fake(),
         enabled: true,
         name: Name(EN).fake(),
         description: "world".to_string(),
     }
 }
 
-pub fn fake_item_variation(id: &Id) -> SqlCatalogItemVariation {
+pub fn fake_item_variation(item_id: Id) -> ItemVariation {
     ItemVariation {
-        item_id: *id,
+        item_id,
         images: vec![],
         enabled: true,
         measurement_units: ItemMeasurmentUnits::Area,

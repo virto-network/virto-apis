@@ -1,5 +1,9 @@
 [workspace]
 members = [
+	"server",
+	"common",
 	"blockchain",
 	"merchant"
 ]
+
+default-members = ["server"]
