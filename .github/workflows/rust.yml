@@ -28,3 +28,5 @@ jobs:
       with:
         path: merchant
         release-type: rust
+        extra-files: |
+          target/release/merchant

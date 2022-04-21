@@ -10,7 +10,12 @@ Welcome to our merchant API, which currently supports:
 
 ### Setup steps
 
+Run the tests `cargo test`. It uses an in-memory database so there's no need for extra setup.
+
+Alternatively you can setup a local database to run the server
+
 1. Install sqlx cli `cargo install sqlx-cli`
 2. Create DB `sqlx database create`
 3. Run the migrations `sqlx migrate run`.
-4. Run the tests `cargo test`.
+4. `cargo run -p merchant`
+
