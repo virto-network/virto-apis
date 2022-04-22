@@ -18,11 +18,17 @@ jobs:
       run: cargo test
     - name: Build
       run: cargo build --release
+    - name: Server binary
+      uses: actions/upload-artifact@v3.0.0
+      with:
+        path: target/release/merchant 
       
   release:
     runs-on: ubuntu-latest
     needs: build
     steps:
+    - name: Server binary
+      uses: actions/download-artifact@v3.0.0
     - name: Release please
       uses: google-github-actions/release-please-action@v3.1.2
       with:
