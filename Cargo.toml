@@ -1,5 +1,6 @@
 [workspace]
 members = [
-	"blockchain",
-	"merchant"
+  "blockchain",
+  "merchant",
+  "files",
 ]
