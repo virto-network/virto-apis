@@ -6,13 +6,17 @@ version = "0.1.0"
 [dependencies]
 async-std = {version = "1.8.0", features = ["attributes"]}
 async-trait = "0.1.52"
+futures = "0.3.21"
+image = "0.24.2"
 mime2ext = "0.1.52"
 multer = "2.0.2"
 nanoid = "0.4.0"
 rust-s3 = {version = "0.31.0", default-features = false, features = ["with-async-std"]}
+sea-query = {version = "0.24.6", features = ["sqlx-sqlite"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 serde_with = "1.9.2"
+sqlx = {version = "0.5.13", features = ["runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"]}
 tempfile = "3.3.0"
 tide = "0.16.0"
 
