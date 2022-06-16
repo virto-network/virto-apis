@@ -46,7 +46,7 @@ impl From<Order> for OrderSql {
 impl BulkDocumentReferencesResolver for CatalogSQLService {
     type Id = Id;
     fn resolve(
-        idMap: &HashMap<&str, Self::Id>,
+        id_map: &HashMap<&str, Self::Id>,
         catalog: &CatalogObject<String>,
     ) -> Result<CatalogObject<Self::Id>, CatalogError> {
         let item = match &catalog {
@@ -64,7 +64,7 @@ impl BulkDocumentReferencesResolver for CatalogSQLService {
                 warranty_time: warranty_time.to_owned(),
                 enabled: enabled.to_owned(),
                 images: images.to_owned(),
-                item_id: idMap
+                item_id: id_map
                     .get(item_id.as_str())
                     .ok_or(CatalogError::BulkReferenceNotExist(item_id.to_string()))?
                     .clone(),
@@ -87,7 +87,7 @@ impl BulkDocumentReferencesResolver for CatalogSQLService {
                 available_units: available_units.to_owned(),
                 enabled: enabled.to_owned(),
                 images: images.to_owned(),
-                item_id: idMap
+                item_id: id_map
                     .get(item_id.as_str())
                     .ok_or(CatalogError::BulkReferenceNotExist(item_id.to_string()))?
                     .clone(),
@@ -105,10 +105,10 @@ impl BulkDocumentReferencesResolver for CatalogSQLService {
                         let mut combinations: HashMap<String, Self::Id> = HashMap::new();
 
                         for (template_id, id_ref) in item.combinations.iter() {
-                            let id = idMap
+                            let id = id_map
                                 .get(id_ref.as_str())
                                 .clone()
-                                .ok_or(CatalogError::BulkReferenceNotExist(item_id.to_string()))?;
+                                .ok_or(CatalogError::BulkReferenceNotExist(id_ref.to_string()))?;
 
                             combinations
                                 .entry(template_id.to_string())
@@ -125,7 +125,7 @@ impl BulkDocumentReferencesResolver for CatalogSQLService {
                 };
                 CatalogObject::Control(ItemControl {
                     control,
-                    item_id: idMap
+                    item_id: id_map
                         .get(item_id.as_str())
                         .ok_or(CatalogError::BulkReferenceNotExist(item_id.to_string()))?
                         .clone(),
@@ -134,7 +134,7 @@ impl BulkDocumentReferencesResolver for CatalogSQLService {
             CatalogObject::Delivery(ItemDelivery { delivery, item_id }) => {
                 CatalogObject::Delivery(ItemDelivery {
                     delivery: delivery.to_owned(),
-                    item_id: idMap
+                    item_id: id_map
                         .get(item_id.as_str())
                         .ok_or(CatalogError::BulkReferenceNotExist(item_id.to_string()))?
                         .clone(),
@@ -193,8 +193,10 @@ impl CatalogSQLService {
             .expr(Expr::cust("COUNT(1) as count"))
             .from(CatalogSchema::Table)
             .and_where(Expr::col(CatalogSchema::Id).eq("-1"))
-            //.and_where(Expr::col(CatalogSchema::Account).eq("-1"))
+            .and_where(Expr::col(CatalogSchema::Account).eq("-1"))
             .build(QueryBuilder);
+
+        println!("sql {:?}", sql);
         sql
     }
 
@@ -244,6 +246,7 @@ impl CatalogService for CatalogSQLService {
             item @ CatalogObject::Item(entry) => {
                 let data = serde_json::to_value(entry).map_err(|_| CatalogError::MappingError)?;
                 let sql = self.get_sql_to_create(CatalogSchema::ItemData, item);
+
                 (data, sql)
             }
             variation @ CatalogObject::Variation(ItemVariation { item_id, .. })
@@ -258,15 +261,19 @@ impl CatalogService for CatalogSQLService {
                     .get("data")
                     .ok_or(CatalogError::MappingError)?
                     .to_owned();
+
                 let sql = self
                     .get_sql_to_create(CatalogSQLService::to_catalog_schema(variation), variation);
+
                 if !self.exists(account, item_id).await? {
                     println!(
-                        "the catalog id doesnt not exist, {}, A:{}, Id:{}",
+                        "the catalog id doesnt not exist, {:?}, A:{}, Id:{}",
                         variation, account, item_id
                     );
+
                     return Err(CatalogError::CatalogBadRequest);
                 }
+
                 (data, sql)
             }
         };
@@ -319,6 +326,22 @@ impl CatalogService for CatalogSQLService {
                     let key = item_id.clone();
                     objects_dependency_count.entry(key).and_modify(|e| *e += 1);
                 }
+                CatalogObject::Control(ItemControl { item_id, control }) => {
+                    objects_dependency_count
+                        .entry(item_id.clone())
+                        .and_modify(|e| *e += 1);
+                    match &control {
+                        Control::Matrix(MatrixControl { combinations, .. }) => {
+                            for (key, id_ref) in combinations.iter() {
+                                println!("combination {:?} {:?}", key, id_ref);
+                                objects_dependency_count
+                                    .entry(id_ref.clone())
+                                    .and_modify(|e| *e += 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
@@ -327,9 +350,17 @@ impl CatalogService for CatalogSQLService {
             objects_dependency_count.iter().collect();
 
         items_sorted_to_insert.sort_by(|a, b| b.1.cmp(a.1));
+
+        println!("THE SORTED ITEMS {:?}", items_sorted_to_insert);
+
         // we start creating the dependencies from the less dependant
         for (alias_id, _) in &items_sorted_to_insert {
             let item = objects_dependency_map.get(*alias_id).unwrap();
+            println!("item iter {:?}", item);
+            println!(
+                "objects_created_document_id {:?}",
+                objects_created_document_id
+            );
             match item {
                 item @ CatalogObject::Item(_) => {
                     let catalog_object = <Self as BulkDocumentReferencesResolver>::resolve(
@@ -338,9 +369,11 @@ impl CatalogService for CatalogSQLService {
                     )?;
                     let document = self.create(account, &catalog_object).await?;
                     println!("creating element Item {}, {:?}", item, document);
+
                     objects_created_document_id
                         .entry(alias_id)
                         .or_insert(document.id.clone());
+
                     objects_created_document
                         .entry(alias_id.to_string())
                         .or_insert(document);
@@ -349,15 +382,23 @@ impl CatalogService for CatalogSQLService {
                 | v @ CatalogObject::Modification(ItemModification { item_id, .. })
                 | v @ CatalogObject::Control(ItemControl { item_id, .. })
                 | v @ CatalogObject::Delivery(ItemDelivery { item_id, .. }) => {
+                    println!(" item_id {:?}, variation {:?} ", item_id, v);
+                    println!("Objects documents {:?}", objects_created_document);
+
                     if objects_created_document_id.get(item_id.as_str()).is_some() {
+                        println!("!ID FOUND {:?}", item_id);
+
                         let catalog_object = <Self as BulkDocumentReferencesResolver>::resolve(
                             &objects_created_document_id,
                             v,
                         )?;
+
                         let document = self.create(account, &catalog_object).await?;
+
                         objects_created_document_id
                             .entry(alias_id)
                             .or_insert(document.id.clone());
+
                         objects_created_document
                             .entry(alias_id.to_string())
                             .or_insert(document);
@@ -381,15 +422,19 @@ impl CatalogService for CatalogSQLService {
             .await
             .map_err(|_| CatalogError::DatabaseError)?;
 
+        println!("Check if exists {:?} {:?}", _account, id);
+
         let catalog_row: Count = sqlx::query_as(self.get_sql_to_exists().as_str())
             .bind(id)
-            //.bind(account)
+            .bind(_account)
             .fetch_one(&mut pool)
             .await
             .map_err(|err| match err {
                 sqlx::Error::RowNotFound => CatalogError::CatalogEntryNotFound(id.to_string()),
                 _ => CatalogError::DatabaseError,
             })?;
+
+        println!("row count {:?}", catalog_row);
 
         Ok(catalog_row.count != 0)
     }
@@ -446,6 +491,7 @@ impl CatalogService for CatalogSQLService {
                     CatalogSQLService::to_catalog_schema(variation),
                     variation.to_string().as_str(),
                 );
+
                 if !self.exists(account, item_id).await? {
                     println!("the catalog id doesnt not exist");
                     return Err(CatalogError::CatalogBadRequest);

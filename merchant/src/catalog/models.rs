@@ -51,7 +51,11 @@ pub enum ItemCategory {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(tag = "type")]
 pub enum Price {
-    Fixed { amount: f32, currency: String },
+    Fixed { 
+        amount: f32,
+        asset_name: String,
+        asset_scale: i8
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd, Eq)]

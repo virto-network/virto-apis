@@ -35,7 +35,8 @@ pub fn fake_item_variation<T>(item_id: T) -> ItemVariation<T> {
         name: Name(EN).fake(),
         price: Price::Fixed {
             amount: (100.0f32..1000.0f32).fake::<f32>(),
-            currency: "USD".to_string(),
+            asset_name: "USD".to_string(),
+            asset_scale: 2,
         },
         sku: Buzzword().fake(),
         available_units: 10,
@@ -94,7 +95,8 @@ pub fn fake_item_modification<T>(id: T) -> ItemModification<T> {
         name: Name(EN).fake(),
         price: Price::Fixed {
             amount: (100.0f32..1000.0f32).fake::<f32>(),
-            currency: "USD".to_string(),
+            asset_name: "USD".to_string(),
+            asset_scale: 2,
         },
     }
 }

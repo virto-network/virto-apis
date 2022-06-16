@@ -471,7 +471,8 @@ pub mod item_find_test {
         let mut variation = fake_item_variation(item_doc.id);
         variation.price = Price::Fixed {
             amount: 2000.0f32,
-            currency: "USD".to_string(),
+            asset_name: "USD".to_string(),
+            asset_scale: 2,
         };
 
         let variation_document = make_variation(&catalog_service, variation.clone()).await?;
@@ -480,7 +481,8 @@ pub mod item_find_test {
 
         variation_two.price = Price::Fixed {
             amount: 5000.0f32,
-            currency: "USD".to_string(),
+            asset_name: "USD".to_string(),
+            asset_scale: 2,
         };
 
         let variation_document_two =
