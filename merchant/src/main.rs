@@ -9,7 +9,7 @@ use catalog::{
 
 use serde::Serialize;
 use serde_json::json;
-use sqlx::{migrate::Migrator, SqlitePool as Pool};
+use sqlx::{migrate::Migrator, sqlite::SqlitePoolOptions as PoolOptions};
 use tide::{
     http::headers::HeaderValue,
     security::{CorsMiddleware, Origin},
@@ -166,7 +166,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(DEFAULT_DB_FILE.into());
     let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.into());
 
-    let conn = Pool::connect(&db_file).await?;
+    let conn = PoolOptions::new()
+        .max_connections(1)
+        .connect(&db_file)
+        .await?;
     MIGRATOR.run(&conn).await?;
     let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
 
