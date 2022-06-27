@@ -300,7 +300,7 @@ impl CatalogService for CatalogSQLService {
     async fn bulk_create(
         &self,
         account: &Account,
-        catalog: &Vec<CatalogObjectBulkDocument<String>>,
+        catalog: &[CatalogObjectBulkDocument<String>],
     ) -> Result<Vec<SqlCatalogObjectDocument>, CatalogError> {
         let mut objects_dependency_count: HashMap<String, u32> = HashMap::new();
         let mut objects_created_document: HashMap<String, SqlCatalogObjectDocument> =
