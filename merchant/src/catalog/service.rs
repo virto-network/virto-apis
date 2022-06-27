@@ -60,7 +60,7 @@ pub trait CatalogService: BulkDocumentReferencesResolver<Id = CatalogId<Self>> +
     async fn bulk_create(
         &self,
         account: &Self::Account,
-        catalog: &Vec<CatalogObjectBulkDocument<String>>, // we use string type for Id to enable referecing
+        catalog: &[CatalogObjectBulkDocument<String>], // we use string type for Id to enable referecing
     ) -> Result<Vec<CatalogObjectDocument<CatalogId<Self>, Self::Account>>, CatalogError>;
 
     async fn exists(
