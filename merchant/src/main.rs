@@ -164,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .map(|f| format!("sqlite:{}", f))
         .unwrap_or(DEFAULT_DB_FILE.into());
+
     let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.into());
 
     let conn = PoolOptions::new()
