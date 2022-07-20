@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use super::models::{CatalogObject, CatalogObjectBulkDocument, CatalogObjectDocument};
 use async_trait::async_trait;
@@ -37,17 +37,17 @@ pub enum CatalogColumnOrder {
     Price,
 }
 
-pub trait BulkDocumentConverter {
+pub trait BulkDocumentReferencesResolver {
     type Id;
-    fn to_simple_catalog_object(
-        id: Self::Id,
+    fn resolve(
+        idMap: &HashMap<&str, Self::Id>,
         catalog: &CatalogObject<String>,
-    ) -> CatalogObject<Self::Id>;
+    ) -> Result<CatalogObject<Self::Id>, CatalogError>;
 }
 
-type CatalogId<Trait> = <Trait as CatalogService>::Id;
+pub type CatalogId<Trait> = <Trait as CatalogService>::Id;
 #[async_trait]
-pub trait CatalogService: BulkDocumentConverter<Id = CatalogId<Self>> + Commander {
+pub trait CatalogService: BulkDocumentReferencesResolver<Id = CatalogId<Self>> + Commander {
     type Id;
     type Query: Send;
 
@@ -60,25 +60,25 @@ pub trait CatalogService: BulkDocumentConverter<Id = CatalogId<Self>> + Commande
     async fn bulk_create(
         &self,
         account: &Self::Account,
-        catalog: Vec<CatalogObjectBulkDocument<String>>, // we use string type for Id to enable referecing
+        catalog: &[CatalogObjectBulkDocument<String>], // we use string type for Id to enable referecing
     ) -> Result<Vec<CatalogObjectDocument<CatalogId<Self>, Self::Account>>, CatalogError>;
 
     async fn exists(
         &self,
         account: &Self::Account,
-        id: CatalogId<Self>,
+        id: &CatalogId<Self>,
     ) -> Result<bool, CatalogError>;
 
     async fn read(
         &self,
         account: &Self::Account,
-        id: CatalogId<Self>,
+        id: &CatalogId<Self>,
     ) -> Result<CatalogObjectDocument<CatalogId<Self>, Self::Account>, CatalogError>;
 
     async fn update(
         &self,
         account: &Self::Account,
-        id: CatalogId<Self>,
+        id: &CatalogId<Self>,
         catalog_document: &CatalogObject<CatalogId<Self>>,
     ) -> Result<CatalogObjectDocument<CatalogId<Self>, Self::Account>, CatalogError>;
 

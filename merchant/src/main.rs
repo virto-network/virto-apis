@@ -9,7 +9,7 @@ use catalog::{
 
 use serde::Serialize;
 use serde_json::json;
-use sqlx::{migrate::Migrator, SqlitePool as Pool};
+use sqlx::{migrate::Migrator, sqlite::SqlitePoolOptions as PoolOptions};
 use tide::{
     http::headers::HeaderValue,
     security::{CorsMiddleware, Origin},
@@ -94,7 +94,7 @@ async fn read(request: Request<MyState>) -> tide::Result {
     let state = request.state().clone();
     let service = state.catalog_service.clone();
     println!("retriving the service id");
-    let result = service.read(&account_id.to_string(), id.parse()?).await;
+    let result = service.read(&account_id.to_string(), &id.parse()?).await;
     Ok(wrap_result(&result).unwrap())
 }
 
@@ -126,7 +126,7 @@ async fn update(mut request: Request<MyState>) -> tide::Result {
     let state = request.state().clone();
     let service = state.catalog_service.clone();
     let result = service
-        .update(&account_id.to_string(), id.parse()?, &catalog)
+        .update(&account_id.to_string(), &id.parse()?, &catalog)
         .await;
     Ok(wrap_result(&result).unwrap())
 }
@@ -137,7 +137,7 @@ async fn bulk_create(mut request: Request<MyState>) -> tide::Result {
     println!("Bulk-Create({}) - {:?}", account_id, catalog);
     let state = request.state().clone();
     let service = state.catalog_service.clone();
-    let result = service.bulk_create(&account_id.to_string(), catalog).await;
+    let result = service.bulk_create(&account_id.to_string(), &catalog).await;
     Ok(wrap_result(&result).unwrap())
 }
 
@@ -164,9 +164,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .map(|f| format!("sqlite:{}", f))
         .unwrap_or(DEFAULT_DB_FILE.into());
+
     let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.into());
 
-    let conn = Pool::connect(&db_file).await?;
+    let conn = PoolOptions::new()
+        .max_connections(1)
+        .connect(&db_file)
+        .await?;
     MIGRATOR.run(&conn).await?;
     let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
 
