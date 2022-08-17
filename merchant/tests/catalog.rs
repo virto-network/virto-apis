@@ -336,6 +336,7 @@ pub mod item_variation_test {
         let item_doc = make_item(&catalog_service, fake_item()).await?;
         let variation = fake_item_variation(item_doc.id);
         let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
+
         check_variation_document(&variation_doc, &variation);
         Ok(())
     }

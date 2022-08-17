@@ -73,6 +73,7 @@ pub struct Item {
     pub category: ItemCategory,
     pub tags: Vec<String>,
     pub name: String,
+    pub images: Vec<Image>,
     pub description: String,
     pub enabled: bool,
     #[serde(flatten, with = "warranty_prefix")]

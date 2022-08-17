@@ -18,6 +18,7 @@ pub fn fake_item() -> Item {
         category: ItemCategory::Shop,
         tags,
         enabled: true,
+        images: vec![],
         name: Name(EN).fake(),
         description: "world".to_string(),
         warranty_time: None,

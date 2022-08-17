@@ -159,11 +159,7 @@ const DEFAULT_PORT: &str = "5555";
 
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db_file = std::env::args()
-        .skip(1)
-        .next()
-        .map(|f| format!("sqlite:{}", f))
-        .unwrap_or(DEFAULT_DB_FILE.into());
+    let db_file = std::env::var("DATABASE_URL").unwrap_or(DEFAULT_DB_FILE.into());
 
     let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.into());
 
