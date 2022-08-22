@@ -4,5 +4,5 @@ COPY . .
 RUN cargo build --release
 
 FROM scratch
-COPY --from=build /usr/src/merchant/target /bin/merchant
-CMD ["/bin/merchant"]
+COPY --from=build /usr/src/merchant/target .
+CMD ["./merchant"]
