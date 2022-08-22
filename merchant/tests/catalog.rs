@@ -12,7 +12,7 @@ use utils::{check_if_error_is, restore_db, AnyHow};
 
 use async_std::task::sleep;
 use fixtures::catalog::{
-    fake_item, fake_item_control, fake_item_modification, fake_item_variation,
+    fake_item, fake_item_control, fake_item_modification, fake_item_variation, fake_item_delivery
 };
 use std::time::Duration;
 
@@ -335,8 +335,10 @@ pub mod item_variation_test {
         let catalog_service = CatalogSQLService::new(pool);
         let item_doc = make_item(&catalog_service, fake_item()).await?;
         let variation = fake_item_variation(item_doc.id);
+        let delivery = fake_item_delivery(item_doc.id);
         let variation_doc = make_variation(&catalog_service, variation.clone()).await?;
 
+        println!("hello here delivery {:?}", ::serde_json::to_string_pretty(&delivery));
         check_variation_document(&variation_doc, &variation);
         Ok(())
     }

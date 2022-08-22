@@ -642,12 +642,18 @@ impl CatalogService for CatalogSQLService {
             .pool
             .acquire()
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|err| {
+                println!("{:?}", err);
+                CatalogError::DatabaseError
+            })?;
 
         let result: Vec<CatalogObjectRow> = bind_query_as(sqlx::query_as(&sql), &values)
             .fetch_all(&mut pool)
             .await
-            .map_err(|_| CatalogError::DatabaseError)?;
+            .map_err(|err| {
+                println!("{:?}", err);
+                CatalogError::DatabaseError
+            })?;
 
         Ok(result
             .into_iter()

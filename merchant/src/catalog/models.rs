@@ -98,6 +98,8 @@ pub struct ItemVariation<Id> {
     pub extra_attributes: Option<HashMap<String, String>>,
 }
 
+
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemModification<Id> {
     pub item_id: Id,
