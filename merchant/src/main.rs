@@ -121,7 +121,7 @@ async fn create(mut request: Request<MyState>) -> tide::Result {
 async fn update(mut request: Request<MyState>) -> tide::Result {
     let catalog: SqlCatalogObject = request.body_json().await?;
     let account_id = request.param("account")?;
-    println!("Create({}) - {:?}", account_id, catalog);
+    println!("Update({}) - {:?}", account_id, catalog);
     let id = request.param("id")?;
     let state = request.state().clone();
     let service = state.catalog_service.clone();
@@ -134,7 +134,7 @@ async fn update(mut request: Request<MyState>) -> tide::Result {
 async fn bulk_create(mut request: Request<MyState>) -> tide::Result {
     let catalog: Vec<CatalogObjectBulkDocument<String>> = request.body_json().await?;
     let account_id = request.param("account")?;
-    println!("Bulk-Create({}) - {:?}", account_id, catalog);
+    println!("Bulk_create({}) - {:?}", account_id, catalog);
     let state = request.state().clone();
     let service = state.catalog_service.clone();
     let result = service.bulk_create(&account_id.to_string(), &catalog).await;
@@ -167,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_connections(1)
         .connect(&db_file)
         .await?;
+
     MIGRATOR.run(&conn).await?;
     let mut app = tide::with_state(MyState::new(CatalogSQLService::new(conn)));
 

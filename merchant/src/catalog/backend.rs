@@ -318,7 +318,9 @@ impl CatalogService for CatalogSQLService {
                 .entry(key_id.clone())
                 .or_insert(&item.catalog_object);
 
-            objects_dependency_count.entry(key_id).or_insert(0);
+            objects_dependency_count
+                .entry(key_id)
+                .or_insert(0);
 
             match &item.catalog_object {
                 CatalogObject::Variation(ItemVariation { item_id, .. })
@@ -330,16 +332,18 @@ impl CatalogService for CatalogSQLService {
                     objects_dependency_count
                         .entry(item_id.clone())
                         .and_modify(|e| *e += 1);
-                    match &control {
-                        Control::Matrix(MatrixControl { combinations, .. }) => {
-                            for (key, id_ref) in combinations.iter() {
-                                println!("combination {:?} {:?}", key, id_ref);
-                                objects_dependency_count
-                                    .entry(id_ref.clone())
-                                    .and_modify(|e| *e += 1);
-                            }
+
+                    if let Control::Matrix(MatrixControl { combinations, .. }) = &control {
+                        for (key, id_ref) in combinations.iter() {
+                            println!("combination key: {:?}  idRef: {:?}", key, id_ref);
+                            objects_dependency_count
+                                .entry(id_ref.clone())
+                                .or_insert(0);
+
+                            objects_dependency_count
+                                .entry(id_ref.clone())
+                                .and_modify(|e| *e += 1);
                         }
-                        _ => {}
                     }
                 }
                 _ => {}
@@ -372,7 +376,7 @@ impl CatalogService for CatalogSQLService {
 
                     objects_created_document_id
                         .entry(alias_id)
-                        .or_insert(document.id.clone());
+                        .or_insert(document.id);
 
                     objects_created_document
                         .entry(alias_id.to_string())
@@ -397,7 +401,7 @@ impl CatalogService for CatalogSQLService {
 
                         objects_created_document_id
                             .entry(alias_id)
-                            .or_insert(document.id.clone());
+                            .or_insert(document.id);
 
                         objects_created_document
                             .entry(alias_id.to_string())
@@ -723,6 +727,7 @@ impl Commander for CatalogSQLService {
 struct Count {
     count: i64,
 }
+
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct CatalogObjectRow {
     pub id: Id,

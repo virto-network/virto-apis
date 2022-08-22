@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt::{self, Display},
+    fmt::{self, Display}, default,
 };
 
 use serde::{Deserialize, Serialize};
@@ -68,17 +68,31 @@ pub enum Time {
 pub struct Image {
     pub url: String,
 }
+
+impl Default for Image {
+    fn default() -> Self {
+        Image {
+            url: "".to_owned()
+        }
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub category: ItemCategory,
     pub tags: Vec<String>,
     pub name: String,
+    #[serde(default = "default_images")]
     pub images: Vec<Image>,
     pub description: String,
     pub enabled: bool,
     #[serde(flatten, with = "warranty_prefix")]
     pub warranty_time: Option<Time>,
 }
+
+fn default_images() -> Vec<Image> {
+    vec![]
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemVariation<Id> {

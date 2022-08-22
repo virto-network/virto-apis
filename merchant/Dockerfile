@@ -1,8 +1,5 @@
-FROM rust:latest AS build
+FROM rust:latest
 WORKDIR /usr/src/merchant
 COPY . .
 RUN cargo build --release
-
-FROM scratch
-COPY --from=build /usr/src/merchant/target .
-CMD ["./merchant"]
+CMD ["target/release/merchant"]
