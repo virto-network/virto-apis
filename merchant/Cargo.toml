@@ -4,15 +4,18 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-async-std = { version = "1.8.0", features = ["attributes"] }
+async-std = { version = "1.8.0", features = ["attributes", "tokio1"] }
 async-trait = "0.1.52"
 rand = "0.8"
 sea-query = { version = "0.23.0", features = ["sqlx-sqlite"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_with = "1.9.2"
-sqlx = { version = "0.5", features = [ "runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"] }
+sqlx = { version = "0.6", features = [ "runtime-async-std-rustls", "sqlite", "json", "migrate", "chrono"] }
 tide = "0.16.0"
+reqwest = "0.11.11"
+jsonwebtoken = "8.1.1"
+jwks_client_rs = "0.3.0"
 
 [dev-dependencies]
 fake = "2.4"
