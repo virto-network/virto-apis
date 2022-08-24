@@ -6,6 +6,7 @@ use catalog::{
     models::CatalogObjectBulkDocument,
     service::{CatalogError, CatalogService, Commander},
 };
+use utils::jwt::{jwt_middleware};
 
 use serde::Serialize;
 use serde_json::json;
@@ -181,11 +182,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.at("/")
         .get(|_| async move { Ok(json!({ "version": "1" })) });
 
-    app.at("/catalog/:account").get(list).post(create);
+    app.at("/catalog/:account")
+        .get(list)
+        .with(jwt_middleware)
+        .post(create);
 
-    app.at("/catalog/:account/_bulk").post(bulk_create);
+    app.at("/catalog/:account/_bulk")
+        .with(jwt_middleware)
+        .post(bulk_create);
 
-    app.at("/catalog/:account/:id").get(read).put(update);
+    app.at("/catalog/:account/:id")
+        .get(read)
+        .with(jwt_middleware)
+        .put(update);
 
     app.at("/catalog/:account/cmd").post(cmd);
 
