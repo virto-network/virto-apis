@@ -22,6 +22,7 @@ pub fn fake_item() -> Item {
         name: Name(EN).fake(),
         description: "world".to_string(),
         warranty_time: None,
+        warranty_tc_url: None,
     }
 }
 
@@ -100,7 +101,9 @@ pub fn fake_item_delivery<T>(item_id: T) -> ItemDelivery<T> {
 pub fn fake_item_modification<T>(id: T) -> ItemModification<T> {
     ItemModification {
         processing_time: None,
+        // Warranti-time
         warranty_time: None,
+        warranty_tc_url: None,
         item_id: id,
         images: vec![],
         enabled: true,

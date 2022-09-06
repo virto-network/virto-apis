@@ -87,6 +87,7 @@ pub struct Item {
     pub enabled: bool,
     #[serde(flatten, with = "warranty_prefix")]
     pub warranty_time: Option<Time>,
+    pub warranty_tc_url: Option<String>,
 }
 
 fn default_images() -> Vec<Image> {
@@ -111,8 +112,6 @@ pub struct ItemVariation<Id> {
     pub extra_attributes: Option<HashMap<String, String>>,
 }
 
-
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ItemModification<Id> {
     pub item_id: Id,
@@ -121,6 +120,7 @@ pub struct ItemModification<Id> {
     pub processing_time: Option<Time>,
     #[serde(flatten, with = "warranty_prefix")]
     pub warranty_time: Option<Time>,
+    pub warranty_tc_url: Option<String>,
     pub images: Vec<Image>,
     #[serde(flatten, with = "price_prefix")]
     pub price: Price,
