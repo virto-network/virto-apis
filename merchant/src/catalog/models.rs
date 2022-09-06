@@ -108,7 +108,6 @@ pub struct ItemVariation<Id> {
     pub available_units: i32,
     #[serde(flatten, with = "price_prefix")]
     pub price: Price,
-    // #[serde(flatten)]
     pub extra_attributes: Option<HashMap<String, String>>,
 }
 
@@ -147,9 +146,26 @@ pub struct ItemDelivery<Id> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct MatrixProp {
+#[serde(tag = "type")]
+pub enum MatrixPropType {
+    Image,
+    Color,
+    Text,
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub struct MatrixPropOption {
     pub name: String,
-    pub options: Vec<String>,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct MatrixProp {
+    pub content_type: Option<MatrixPropType>,
+    pub name: String,
+    pub options: Vec<MatrixPropOption>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

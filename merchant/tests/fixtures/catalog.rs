@@ -4,7 +4,7 @@ use fake::faker::company::en::Buzzword;
 use merchant::catalog::backend::{Id, SqlCatalogItemVariation};
 use merchant::catalog::models::{
     Control, Delivery, Item, ItemCategory, ItemControl, ItemDelivery, ItemMeasurmentUnits,
-    ItemModification, ItemVariation, MatrixControl, MatrixProp, Price,
+    ItemModification, ItemVariation, MatrixControl, MatrixProp, Price, MatrixPropOption,
 };
 
 use fake::faker::lorem::en::*;
@@ -53,19 +53,30 @@ pub fn fake_item_control<T>(item_id: T) -> ItemControl<T> {
             props: vec![
                 MatrixProp {
                     name: String::from("color"),
+                    content_type: None,
                     options: vec![
-                        String::from("Blue"),
-                        String::from("Red"),
-                        String::from("Yellow"),
+                        MatrixPropOption {
+                            name: String::from("red"),
+                            value: String::from("#fff")
+                        },
+                        MatrixPropOption {
+                            name: String::from("red"),
+                            value: String::from("#fff")
+                        }
                     ],
                 },
                 MatrixProp {
+                    content_type: None,
                     name: String::from("size"),
                     options: vec![
-                        String::from("S"),
-                        String::from("M"),
-                        String::from("X"),
-                        String::from("L"),
+                        MatrixPropOption {
+                            name: String::from("red"),
+                            value: String::from("#fff")
+                        },
+                        MatrixPropOption {
+                            name: String::from("red"),
+                            value: String::from("#fff")
+                        }
                     ],
                 },
             ],
